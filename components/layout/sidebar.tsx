@@ -13,6 +13,7 @@ import {
   Clipboard,
   CheckCircle2,
   Tickets,
+  Settings2,
   LogOut,
 } from 'lucide-react';
 import {
@@ -72,6 +73,11 @@ const navItems = [
     href: '/staff/result-release',
     icon: CheckCircle2,
   },
+  {
+    label: 'Admin Settings',
+    href: '/staff/settings',
+    icon: Settings2,
+  },
 ];
 
 export function Sidebar() {
@@ -110,6 +116,8 @@ export function Sidebar() {
     }
 
     switch (stationRole) {
+      case 'admin':
+        return navItems;
       case 'nurse':
         return navItems.filter((item) =>
           ['/dashboard', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'].includes(item.href)

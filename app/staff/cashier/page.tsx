@@ -10,84 +10,123 @@ import { Badge } from '@/components/ui/badge';
 import { PageLayout } from '@/components/layout/page-layout';
 import { formatCurrency } from '@/lib/formatting';
 import {
-  BillingLineItem,
-  BillingPaymentMethod,
-  BillingRecord,
-  findVisitByQueueEntryId,
-  readPatientRecords,
+  billingCatalog,
+  buildDefaultLineItems,
+  paymentMethods,
+  type BillingRecord,
+  type BillingPaymentMethod,
+  type CatalogService,
+} from '@/lib/billing';
+import {
   saveVisitBilling,
 } from '@/lib/patient-records-store';
-
-type CatalogService = BillingLineItem & {
-  category: string;
-};
-
-const billingCatalog: CatalogService[] = [
-  { id: 'svc-pre-employment', name: 'Pre-Employment Package', amount: 850, category: 'Packages' },
-  { id: 'svc-checkup', name: 'Doctor Check-Up Consultation', amount: 500, category: 'Consultation' },
-  { id: 'svc-blood-test', name: 'Blood Test Service', amount: 250, category: 'Laboratory' },
-  { id: 'svc-drug-test', name: 'Drug Test Service', amount: 350, category: 'Laboratory' },
-  { id: 'svc-xray', name: 'Xray Service', amount: 650, category: 'Imaging' },
-];
-
-const paymentMethods: BillingPaymentMethod[] = ['Cash', 'Card', 'HMO', 'E-Wallet'];
-
-function buildDefaultLineItems(
-  serviceType: string,
-  requestedLabService: string,
-  completedLanes: string[]
-) {
-  if (serviceType === 'Pre-Employment') {
-    return billingCatalog.filter((item) => item.id === 'svc-pre-employment');
-  }
-
-  if (serviceType === 'Check-Up') {
-    const defaults = billingCatalog.filter((item) => item.id === 'svc-checkup');
-    const referrals = completedLanes
-      .map((lane) => {
-        switch (lane) {
-          case 'BLOOD TEST':
-            return billingCatalog.find((item) => item.id === 'svc-blood-test');
-          case 'DRUG TEST':
-            return billingCatalog.find((item) => item.id === 'svc-drug-test');
-          case 'XRAY':
-            return billingCatalog.find((item) => item.id === 'svc-xray');
-          default:
-            return null;
-        }
-      })
-      .filter(Boolean) as CatalogService[];
-
-    return [...defaults, ...referrals];
-  }
-
-  switch (requestedLabService) {
-    case 'Blood Test':
-      return billingCatalog.filter((item) => item.id === 'svc-blood-test');
-    case 'Drug Test':
-      return billingCatalog.filter((item) => item.id === 'svc-drug-test');
-    case 'Xray':
-      return billingCatalog.filter((item) => item.id === 'svc-xray');
-    default:
-      return [];
-  }
-}
 
 function CashierPageContent() {
   const searchParams = useSearchParams();
   const queueId = searchParams.get('queueId') ?? '';
   const [selectedServices, setSelectedServices] = useState<CatalogService[]>([]);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>(billingCatalog);
   const [paymentMethod, setPaymentMethod] = useState<BillingPaymentMethod>('Cash');
   const [discountRate, setDiscountRate] = useState(0);
   const [paymentMessage, setPaymentMessage] = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [visitContext, setVisitContext] = useState<{
+    patient: {
+      name: string;
+      contactNumber: string;
+      emailAddress: string;
+    };
+    visit: {
+      queueNumber: string;
+      patientName: string;
+      serviceType: string;
+      requestedLabService: string;
+      completedLanes: string[];
+      visitStatus: string;
+    };
+    billing: BillingRecord | null;
+    suggestedLineItems: CatalogService[];
+  } | null>(null);
+  const [pageError, setPageError] = useState('');
 
-  const visitContext = useMemo(
-    () => (queueId ? findVisitByQueueEntryId(queueId) : null),
-    [queueId, refreshKey]
-  );
+  const existingBilling = visitContext?.billing ?? null;
 
-  const existingBilling = visitContext?.visit.billing ?? null;
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch('/api/staff/service-catalog', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Unable to load service catalog.');
+        }
+
+        return (await response.json()) as { services: CatalogService[] };
+      })
+      .then((payload) => {
+        if (isMounted && payload.services.length > 0) {
+          setCatalogServices(payload.services);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCatalogServices(billingCatalog);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!queueId) {
+      setVisitContext(null);
+      return;
+    }
+
+    let isMounted = true;
+
+    fetch(`/api/staff/cashier?queueId=${encodeURIComponent(queueId)}`, { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? 'Unable to load cashier context.');
+        }
+
+        return (await response.json()) as {
+          patient: {
+            name: string;
+            contactNumber: string;
+            emailAddress: string;
+          };
+          visit: {
+            queueNumber: string;
+            patientName: string;
+            serviceType: string;
+            requestedLabService: string;
+            completedLanes: string[];
+            visitStatus: string;
+          };
+          billing: BillingRecord | null;
+          suggestedLineItems: CatalogService[];
+        };
+      })
+      .then((payload) => {
+        if (isMounted) {
+          setVisitContext(payload);
+          setPageError('');
+        }
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setPageError(error instanceof Error ? error.message : 'Unable to load cashier context.');
+          setVisitContext(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [queueId]);
 
   useEffect(() => {
     if (!visitContext) {
@@ -97,7 +136,7 @@ function CashierPageContent() {
     if (existingBilling) {
       const hydratedServices = existingBilling.lineItems
         .map((lineItem) =>
-          billingCatalog.find((catalogItem) => catalogItem.id === lineItem.id) ?? {
+          catalogServices.find((catalogItem) => catalogItem.id === lineItem.id) ?? {
             ...lineItem,
             category: 'Custom',
           }
@@ -113,12 +152,13 @@ function CashierPageContent() {
       buildDefaultLineItems(
         visitContext.visit.serviceType,
         visitContext.visit.requestedLabService,
-        visitContext.visit.completedLanes
+        visitContext.visit.completedLanes,
+        catalogServices
       )
     );
     setPaymentMethod('Cash');
     setDiscountRate(0);
-  }, [existingBilling, visitContext]);
+  }, [catalogServices, existingBilling, visitContext]);
 
   const subtotal = selectedServices.reduce((sum, service) => sum + service.amount, 0);
   const discount = subtotal * discountRate;
@@ -133,7 +173,7 @@ function CashierPageContent() {
     );
   };
 
-  const handleSaveBilling = (status: BillingRecord['paymentStatus']) => {
+  const handleSaveBilling = async (status: BillingRecord['paymentStatus']) => {
     if (!queueId) {
       return;
     }
@@ -148,12 +188,41 @@ function CashierPageContent() {
       paidAt: status === 'paid' ? new Date().toISOString() : undefined,
     };
 
+    const response = await fetch('/api/staff/cashier', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        queueId,
+        billing,
+      }),
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      setPageError(payload?.error ?? 'Unable to save billing.');
+      return;
+    }
+
     saveVisitBilling(queueId, billing);
-    setRefreshKey((current) => current + 1);
+    setVisitContext((current) =>
+      current
+        ? {
+            ...current,
+            billing,
+            visit: {
+              ...current.visit,
+              visitStatus: billing.paymentStatus === 'paid' ? 'paid' : 'awaiting-payment',
+            },
+          }
+        : current
+    );
+    setPageError('');
     setPaymentMessage(
       status === 'paid'
-        ? 'Payment has been recorded and this visit is now saved in patient records.'
-        : 'Billing draft saved to the patient visit record.'
+        ? 'Payment has been recorded to the database and mirrored to patient records.'
+        : 'Billing draft saved to the database.'
     );
   };
 
@@ -164,7 +233,7 @@ function CashierPageContent() {
           <Card className="p-8 text-center">
             <h1 className="text-2xl font-bold">No Active Billing Context</h1>
             <p className="mt-3 text-muted-foreground">
-              Open cashier from a scanned queue slip or with a valid `queueId`.
+              {pageError || 'Open cashier from a scanned queue slip or with a valid `queueId`.'}
             </p>
             <Button asChild className="mt-6">
               <Link href="/staff/queue">Back to Queue Management</Link>
@@ -221,11 +290,11 @@ function CashierPageContent() {
                 </p>
                 <p>
                   Contact:{' '}
-                  <span className="font-medium text-foreground">{patient.contactNumber}</span>
+                  <span className="font-medium text-foreground">{patient.contactNumber || 'N/A'}</span>
                 </p>
                 <p>
                   Email:{' '}
-                  <span className="font-medium text-foreground">{patient.emailAddress}</span>
+                  <span className="font-medium text-foreground">{patient.emailAddress || 'N/A'}</span>
                 </p>
               </div>
             </Card>
@@ -237,7 +306,7 @@ function CashierPageContent() {
               </p>
 
               <div className="mt-5 space-y-3">
-                {billingCatalog.map((service) => {
+                {catalogServices.map((service) => {
                   const isSelected = selectedServices.some((item) => item.id === service.id);
 
                   return (
@@ -395,6 +464,12 @@ function CashierPageContent() {
             {paymentMessage && (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                 {paymentMessage}
+              </div>
+            )}
+
+            {pageError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {pageError}
               </div>
             )}
 

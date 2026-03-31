@@ -1,8 +1,52 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import type { LabReportTemplateData, LabReportSection } from '@/components/common/lab-report-template';
+import { generateLabReportPdf } from '@/lib/report-pdf';
 
 type UiLane = 'BLOOD TEST' | 'DRUG TEST' | 'XRAY';
+type ReportStatus = 'draft' | 'validated' | 'released';
+type ReportRow = {
+  id: string;
+  lab_order_id: string;
+  status: ReportStatus;
+  pdf_storage_path?: string | null;
+  email_sent_at?: string | null;
+  validated_by: string | null;
+  released_by: string | null;
+  review_notes: string | null;
+  review_flagged_at: string | null;
+  validated_at: string | null;
+  released_at: string | null;
+};
+type MachineImportStatus = 'uploaded' | 'parsed' | 'reviewed' | 'accepted' | 'rejected';
+type AuditEvent = {
+  id: string;
+  timestamp: string;
+  title: string;
+  detail: string;
+  actor: string;
+  tone: 'default' | 'warning' | 'success';
+};
+
+async function ensureReportsBucket(supabase: ReturnType<typeof getSupabaseAdminClient>) {
+  const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets();
+
+  if (bucketsError) {
+    throw new Error(bucketsError.message);
+  }
+
+  if (buckets?.some((bucket) => bucket.name === 'reports')) {
+    return;
+  }
+
+  const { error: createBucketError } = await supabase.storage.createBucket('reports', {
+    public: false,
+  });
+
+  if (createBucketError && !createBucketError.message.toLowerCase().includes('already exists')) {
+    throw new Error(createBucketError.message);
+  }
+}
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -270,6 +314,38 @@ function mapLaneToUiLane(lane: string): UiLane {
   }
 }
 
+function getOverallReportStatus(
+  reports: ReportRow[],
+  hasResultData: boolean,
+  hasReviewFlag = false
+): ReportStatus | 'pending' {
+  if (hasReviewFlag) {
+    return 'draft';
+  }
+
+  if (reports.length === 0) {
+    return hasResultData ? 'draft' : 'pending';
+  }
+
+  if (reports.every((report) => report.status === 'released')) {
+    return 'released';
+  }
+
+  if (reports.some((report) => report.status === 'validated' || report.status === 'released')) {
+    return 'validated';
+  }
+
+  return 'draft';
+}
+
+function toActorName(actorId: string | null | undefined, staffById: Map<string, string>) {
+  if (!actorId) {
+    return 'System';
+  }
+
+  return staffById.get(actorId) ?? 'Staff';
+}
+
 function buildSections(resultItems: Array<Record<string, unknown>>) {
   const sectionsMap = new Map<string, LabReportSection>();
 
@@ -317,6 +393,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const queueId = url.searchParams.get('queueId');
+    const isPublicRequest = url.searchParams.get('public') === '1';
 
     if (!queueId) {
       return NextResponse.json({ error: 'Missing queueId.' }, { status: 400 });
@@ -366,6 +443,15 @@ export async function GET(request: Request) {
 
     const labOrderIds = (labOrders ?? []).map((order) => order.id);
 
+    const { data: reports, error: reportsError } = await supabase
+      .from('reports')
+      .select('id, lab_order_id, status, pdf_storage_path, email_sent_at, validated_by, released_by, review_notes, review_flagged_at, validated_at, released_at')
+      .in('lab_order_id', labOrderIds.length > 0 ? labOrderIds : ['00000000-0000-0000-0000-000000000000']);
+
+    if (reportsError) {
+      throw new Error(reportsError.message);
+    }
+
     const { data: labOrderItems, error: itemsError } = await supabase
       .from('lab_order_items')
       .select('id, lab_order_id, service_lane, test_name, test_code')
@@ -401,6 +487,30 @@ export async function GET(request: Request) {
 
     const itemsById = new Map((labOrderItems ?? []).map((item) => [item.id, item]));
     const importsById = new Map((machineImports ?? []).map((item) => [item.id, item]));
+    const actorIds = Array.from(
+      new Set(
+        [
+          ...((machineImports ?? []) as Array<Record<string, unknown>>).flatMap((item) => [
+            String(item.imported_by ?? ''),
+            String(item.reviewed_by ?? ''),
+          ]),
+          ...((reports ?? []) as ReportRow[]).flatMap((report) => [
+            report.validated_by ?? '',
+            report.released_by ?? '',
+          ]),
+        ].filter(Boolean)
+      )
+    );
+    const { data: staffProfiles, error: staffProfilesError } = await supabase
+      .from('staff_profiles')
+      .select('id, full_name')
+      .in('id', actorIds.length > 0 ? actorIds : ['00000000-0000-0000-0000-000000000000']);
+
+    if (staffProfilesError) {
+      throw new Error(staffProfilesError.message);
+    }
+
+    const staffById = new Map((staffProfiles ?? []).map((profile) => [String(profile.id), String(profile.full_name ?? 'Staff')]));
     const enrichedResults = (resultItems ?? []).map((item) => ({
       ...item,
       service_lane: itemsById.get(item.lab_order_item_id)?.service_lane ?? '',
@@ -413,6 +523,90 @@ export async function GET(request: Request) {
 
     const xrayImport = (machineImports ?? []).find((item) => item.lane === 'xray');
     const xrayResults = enrichedResults.filter((item) => item.service_lane === 'xray');
+    const hasReviewFlag = ((machineImports ?? []) as Array<Record<string, unknown>>).some(
+      (item) => String(item.import_status ?? '') === 'rejected'
+    );
+    const reportStatus = getOverallReportStatus(
+      (reports ?? []) as ReportRow[],
+      enrichedResults.length > 0,
+      hasReviewFlag
+    );
+
+    const auditLog: AuditEvent[] = [
+      ...((machineImports ?? []) as Array<Record<string, unknown>>).flatMap((item) => {
+        const payload = (item.parsed_payload as { testName?: string } | null) ?? null;
+        const testName = payload?.testName ?? 'Machine import';
+        const importStatus = String(item.import_status ?? '') as MachineImportStatus;
+        const events: AuditEvent[] = [
+          {
+            id: `import-${String(item.id)}-created`,
+            timestamp: String(item.created_at),
+            title: 'Machine result uploaded',
+            detail: `${testName} import saved as ${importStatus}.`,
+            actor: toActorName(String(item.imported_by ?? ''), staffById),
+            tone: importStatus === 'rejected' ? 'warning' : 'default',
+          },
+        ];
+
+        if (item.reviewed_at) {
+          events.push({
+            id: `import-${String(item.id)}-reviewed`,
+            timestamp: String(item.reviewed_at),
+            title: importStatus === 'rejected' ? 'Flagged for review' : 'Machine import reviewed',
+            detail:
+              importStatus === 'rejected'
+                ? `${testName} was flagged for review and blocked from release.`
+                : `${testName} review status updated to ${importStatus}.`,
+            actor: toActorName(String(item.reviewed_by ?? ''), staffById),
+            tone: importStatus === 'rejected' ? 'warning' : 'default',
+          });
+        }
+
+        return events;
+      }),
+      ...((reports ?? []) as ReportRow[]).flatMap((report) => {
+        const events: AuditEvent[] = [];
+
+        if (report.validated_at) {
+          events.push({
+            id: `report-${report.id}-validated`,
+            timestamp: report.validated_at,
+            title: 'Report validated',
+            detail: 'Laboratory report was validated for release.',
+            actor: toActorName(report.validated_by, staffById),
+            tone: 'default',
+          });
+        }
+
+        if (report.released_at) {
+          events.push({
+            id: `report-${report.id}-released`,
+            timestamp: report.released_at,
+            title: 'Report released',
+            detail: 'Released report is now available for soft-copy access.',
+            actor: toActorName(report.released_by, staffById),
+            tone: 'success',
+          });
+        }
+
+        if (report.review_flagged_at) {
+          events.push({
+            id: `report-${report.id}-review-flagged`,
+            timestamp: report.review_flagged_at,
+            title: 'Report flagged for review',
+            detail: report.review_notes?.trim() || 'Review remarks were not provided.',
+            actor: toActorName(report.validated_by, staffById),
+            tone: 'warning',
+          });
+        }
+
+        return events;
+      }),
+    ].sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+
+    if (isPublicRequest && reportStatus !== 'released') {
+      return NextResponse.json({ error: 'This report has not been released yet.' }, { status: 403 });
+    }
 
     const reportData: LabReportTemplateData = {
       reportTitle: 'Laboratory Result Report',
@@ -472,12 +666,293 @@ export async function GET(request: Request) {
         orderCount: labOrders?.length ?? 0,
         resultCount: resultItems?.length ?? 0,
         machineImportCount: machineImports?.length ?? 0,
+        pdfStoragePath:
+          ((reports ?? []) as Array<ReportRow>)
+            .map((report) => report.pdf_storage_path)
+            .find((value) => Boolean(value)) ?? '',
+        emailAddress: patient.email_address ?? '',
+        emailSentAt:
+          ((reports ?? []) as Array<ReportRow>)
+            .map((report) => report.email_sent_at)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? null,
+        hasReviewFlag,
+        reviewNotes:
+          ((reports ?? []) as ReportRow[])
+            .map((report) => report.review_notes)
+            .find((value) => Boolean(value?.trim())) ?? '',
+        reportStatus,
+        validatedAt:
+          ((reports ?? []) as ReportRow[])
+            .map((report) => report.validated_at)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? null,
+        releasedAt:
+          ((reports ?? []) as ReportRow[])
+            .map((report) => report.released_at)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? null,
         lanes: Array.from(new Set((labOrderItems ?? []).map((item) => mapLaneToUiLane(String(item.service_lane))))),
+        auditLog,
       },
     });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to load report data.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      queueId?: string;
+      action?: 'validate' | 'release' | 'flag_review';
+      staffId?: string;
+      reviewNotes?: string;
+    };
+
+    if (!body.queueId || !body.action) {
+      return NextResponse.json({ error: 'Missing release payload.' }, { status: 400 });
+    }
+
+    const supabase = getSupabaseAdminClient();
+    const now = new Date().toISOString();
+    const requestUrl = new URL(request.url);
+
+    const { data: queueEntry, error: queueError } = await supabase
+      .from('queue_entries')
+      .select('id, visit_id, patient_id')
+      .eq('id', body.queueId)
+      .single();
+
+    if (queueError || !queueEntry) {
+      throw new Error(queueError?.message ?? 'Queue entry not found.');
+    }
+
+    const { data: labOrders, error: labOrdersError } = await supabase
+      .from('lab_orders')
+      .select('id, status, validated_at, released_at')
+      .eq('visit_id', queueEntry.visit_id);
+
+    if (labOrdersError) {
+      throw new Error(labOrdersError.message);
+    }
+
+    if (!labOrders || labOrders.length === 0) {
+      return NextResponse.json({ error: 'No lab orders found for this visit.' }, { status: 400 });
+    }
+
+    const labOrderIds = labOrders.map((order) => order.id);
+
+    const { data: machineImports, error: importsError } = await supabase
+      .from('machine_imports')
+      .select('id, import_status')
+      .eq('visit_id', queueEntry.visit_id);
+
+    if (importsError) {
+      throw new Error(importsError.message);
+    }
+
+    if ((machineImports?.length ?? 0) === 0) {
+      return NextResponse.json(
+        { error: 'At least one machine import is required before validation or release.' },
+        { status: 400 }
+      );
+    }
+
+    if (body.action === 'flag_review') {
+      const { error: reviewImportError } = await supabase
+        .from('machine_imports')
+        .update({
+          import_status: 'rejected',
+          reviewed_by: body.staffId ?? null,
+          reviewed_at: now,
+        })
+        .eq('visit_id', queueEntry.visit_id);
+
+      if (reviewImportError) {
+        throw new Error(reviewImportError.message);
+      }
+
+      const { error: resetReportsError } = await supabase
+        .from('reports')
+        .update({
+          status: 'draft',
+          review_notes: body.reviewNotes?.trim() || null,
+          review_flagged_at: now,
+          released_by: null,
+          released_at: null,
+        })
+        .in('lab_order_id', labOrderIds);
+
+      if (resetReportsError) {
+        throw new Error(resetReportsError.message);
+      }
+
+      return NextResponse.json({
+        success: true,
+        reportStatus: 'draft',
+      });
+    }
+
+    if ((machineImports ?? []).some((item) => item.import_status === 'rejected')) {
+      return NextResponse.json(
+        { error: 'This visit is flagged for review. Resolve the review issue before validation or release.' },
+        { status: 400 }
+      );
+    }
+
+    const { data: existingReports, error: existingReportsError } = await supabase
+      .from('reports')
+      .select('id, lab_order_id, status, review_notes, review_flagged_at, validated_at, released_at')
+      .in('lab_order_id', labOrderIds);
+
+    if (existingReportsError) {
+      throw new Error(existingReportsError.message);
+    }
+
+    const reportByOrderId = new Map(
+      ((existingReports ?? []) as ReportRow[]).map((report) => [report.lab_order_id, report])
+    );
+
+    const nextReports = labOrders.map((order) => {
+      const existingReport = reportByOrderId.get(order.id);
+      const isRelease = body.action === 'release';
+      const nextStatus: ReportStatus =
+        existingReport?.status === 'released'
+          ? 'released'
+          : isRelease
+            ? 'released'
+            : 'validated';
+
+      return {
+        id: existingReport?.id,
+        lab_order_id: order.id,
+        visit_id: queueEntry.visit_id,
+        patient_id: queueEntry.patient_id,
+        status: nextStatus,
+        validated_by: body.staffId ?? null,
+        review_notes: null,
+        review_flagged_at: null,
+        validated_at: existingReport?.validated_at ?? now,
+        released_by:
+          nextStatus === 'released'
+            ? body.staffId ?? null
+            : null,
+        released_at: nextStatus === 'released' ? existingReport?.released_at ?? now : null,
+      };
+    });
+
+    const { error: upsertReportsError } = await supabase
+      .from('reports')
+      .upsert(nextReports, { onConflict: 'lab_order_id' });
+
+    if (upsertReportsError) {
+      throw new Error(upsertReportsError.message);
+    }
+
+    const { error: acceptImportsError } = await supabase
+      .from('machine_imports')
+      .update({
+        import_status: 'accepted',
+        reviewed_by: body.staffId ?? null,
+        reviewed_at: now,
+      })
+      .eq('visit_id', queueEntry.visit_id);
+
+    if (acceptImportsError) {
+      throw new Error(acceptImportsError.message);
+    }
+
+    if (body.action === 'release') {
+      const { error: releaseOrdersError } = await supabase
+        .from('lab_orders')
+        .update({
+          status: 'released',
+          released_by: body.staffId ?? null,
+          released_at: now,
+          validated_by: body.staffId ?? null,
+          validated_at: now,
+        })
+        .in('id', labOrderIds);
+
+      if (releaseOrdersError) {
+        throw new Error(releaseOrdersError.message);
+      }
+
+      const reportResponse = await fetch(
+        `${requestUrl.origin}/api/staff/result-release?queueId=${encodeURIComponent(body.queueId)}`,
+        {
+          cache: 'no-store',
+          headers: {
+            cookie: request.headers.get('cookie') ?? '',
+          },
+        }
+      );
+
+      if (!reportResponse.ok) {
+        const payload = (await reportResponse.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Unable to rebuild report PDF.');
+      }
+
+      const payload = (await reportResponse.json()) as {
+        reportData: LabReportTemplateData;
+      };
+      const pdfBytes = await generateLabReportPdf({
+        ...payload.reportData,
+        softCopyQrDataUrl: '',
+      });
+
+      await ensureReportsBucket(supabase);
+
+      const pdfStoragePath = `released/${body.queueId}/report-${now.replace(/[:.]/g, '-')}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('reports')
+        .upload(pdfStoragePath, pdfBytes, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      const { error: updateReportsPathError } = await supabase
+        .from('reports')
+        .update({
+          pdf_storage_path: pdfStoragePath,
+        })
+        .in('lab_order_id', labOrderIds);
+
+      if (updateReportsPathError) {
+        throw new Error(updateReportsPathError.message);
+      }
+    } else {
+      const { error: validateOrdersError } = await supabase
+        .from('lab_orders')
+        .update({
+          validated_by: body.staffId ?? null,
+          validated_at: now,
+        })
+        .in('id', labOrderIds);
+
+      if (validateOrdersError) {
+        throw new Error(validateOrdersError.message);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      reportStatus: body.action === 'release' ? 'released' : 'validated',
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unable to update report status.' },
       { status: 500 }
     );
   }

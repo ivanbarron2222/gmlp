@@ -70,7 +70,7 @@ export default function QueueManagementPage() {
   );
 
   const roleLane = stationRole ? getRoleLane(stationRole) : null;
-  const isNurseQueueView = !stationRole || stationRole === 'nurse';
+  const hasFullQueueAccess = !stationRole || stationRole === 'nurse' || stationRole === 'admin';
   const visibleServiceLanes = roleLane ? serviceLanes.filter((lane) => lane === roleLane) : serviceLanes;
 
   const getLaneWaiting = (lane: QueueLane) =>
@@ -107,7 +107,7 @@ export default function QueueManagementPage() {
     setQueue(nextQueue);
   };
 
-  if (!isNurseQueueView && roleLane) {
+  if (!hasFullQueueAccess && roleLane) {
     const lane = roleLane;
     const waiting = getLaneWaiting(lane);
     const serving = getLaneServing(lane);
@@ -119,7 +119,7 @@ export default function QueueManagementPage() {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-                {getRoleLabel(stationRole!)}
+              {getRoleLabel(stationRole!)}
               </p>
               <h1 className="mt-2 text-4xl font-bold tracking-tight">{lane} Queue</h1>
               <p className="mt-3 max-w-3xl text-muted-foreground">
@@ -307,9 +307,11 @@ export default function QueueManagementPage() {
           <div>
             <h1 className="text-3xl font-bold">Queue Management</h1>
             <p className="mt-2 text-muted-foreground">
-              {isNurseQueueView
-                ? 'Pre-employment must complete all required stations, but patients can start at any available lab. Check-up starts with the doctor, and optional labs can be added after the consultation.'
-                : `${getRoleLabel(stationRole!)} only sees its assigned queue and currently serving patients.`}
+              {stationRole === 'admin'
+                ? 'Admin can monitor every lane, review queue movement, and oversee the full clinic workflow from one board.'
+                : hasFullQueueAccess
+                  ? 'Pre-employment must complete all required stations, but patients can start at any available lab. Check-up starts with the doctor, and optional labs can be added after the consultation.'
+                  : `${getRoleLabel(stationRole!)} only sees its assigned queue and currently serving patients.`}
             </p>
           </div>
           <Button asChild variant="outline" className="gap-2">
@@ -320,10 +322,12 @@ export default function QueueManagementPage() {
           </Button>
         </div>
 
-        <div className={isNurseQueueView ? 'grid gap-8 xl:grid-cols-[1.05fr_1.95fr]' : 'space-y-8'}>
-          {isNurseQueueView && (
+        <div className={hasFullQueueAccess ? 'grid gap-8 xl:grid-cols-[1.05fr_1.95fr]' : 'space-y-8'}>
+          {hasFullQueueAccess && (
             <Card className="p-6">
-              <h2 className="mb-4 text-lg font-bold">Nurse Intake</h2>
+              <h2 className="mb-4 text-lg font-bold">
+                {stationRole === 'admin' ? 'Registration Oversight' : 'Nurse Intake'}
+              </h2>
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
                   Queue entries are now read directly from the database. Create or verify patients
@@ -346,8 +350,8 @@ export default function QueueManagementPage() {
             </Card>
           )}
 
-          <div className={isNurseQueueView ? 'space-y-8' : ''}>
-            {isNurseQueueView && (
+          <div className={hasFullQueueAccess ? 'space-y-8' : ''}>
+            {hasFullQueueAccess && (
               <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
                 <Card className="p-5">
                   <div className="mb-4 flex items-center justify-between">
@@ -407,13 +411,13 @@ export default function QueueManagementPage() {
               </div>
             )}
 
-            <div className={isNurseQueueView ? 'grid gap-6 md:grid-cols-2' : 'grid gap-6 xl:grid-cols-[1.15fr_0.85fr]'}>
+            <div className={hasFullQueueAccess ? 'grid gap-6 md:grid-cols-2' : 'grid gap-6 xl:grid-cols-[1.15fr_0.85fr]'}>
               {visibleServiceLanes.map((lane) => {
                 const waiting = getLaneWaiting(lane);
                 const serving = getLaneServing(lane);
 
                 return (
-                  <div key={lane} className={isNurseQueueView ? '' : 'grid gap-6 xl:grid-cols-[1.1fr_0.9fr]'}>
+                  <div key={lane} className={hasFullQueueAccess ? '' : 'grid gap-6 xl:grid-cols-[1.1fr_0.9fr]'}>
                     <Card className="p-6">
                       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                         <div>
@@ -516,7 +520,7 @@ export default function QueueManagementPage() {
                           </div>
                         </div>
 
-                        {isNurseQueueView && (
+                        {hasFullQueueAccess && (
                           <div>
                             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Waiting in {lane}
@@ -542,7 +546,7 @@ export default function QueueManagementPage() {
                       </div>
                     </Card>
 
-                    {!isNurseQueueView && (
+                    {!hasFullQueueAccess && (
                       <Card className="p-6">
                         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Waiting in {lane}
@@ -574,7 +578,7 @@ export default function QueueManagementPage() {
               })}
             </div>
 
-            {isNurseQueueView && (
+            {hasFullQueueAccess && (
               <Card className="p-6">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-lg font-bold">Recently Completed</h2>

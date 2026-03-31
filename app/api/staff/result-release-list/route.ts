@@ -52,7 +52,11 @@ export async function GET() {
 
     const labOrderIds = (labOrders ?? []).map((order) => order.id);
 
-    const [{ data: labOrderItems, error: itemsError }, { data: machineImports, error: importsError }] =
+    const [
+      { data: labOrderItems, error: itemsError },
+      { data: machineImports, error: importsError },
+      { data: reports, error: reportsError },
+    ] =
       await Promise.all([
         supabase
           .from('lab_order_items')
@@ -62,6 +66,10 @@ export async function GET() {
           .from('machine_imports')
           .select('id, visit_id, lane')
           .in('visit_id', visitIds.length > 0 ? visitIds : ['00000000-0000-0000-0000-000000000000']),
+        supabase
+          .from('reports')
+          .select('id, lab_order_id, status')
+          .in('lab_order_id', labOrderIds.length > 0 ? labOrderIds : ['00000000-0000-0000-0000-000000000000']),
       ]);
 
     if (itemsError) {
@@ -70,6 +78,9 @@ export async function GET() {
 
     if (importsError) {
       throw importsError;
+    }
+    if (reportsError) {
+      throw reportsError;
     }
 
     const itemsByOrder = new Map<string, Array<Record<string, unknown>>>();
@@ -96,6 +107,14 @@ export async function GET() {
       importsByVisit.set(visitId, current);
     }
 
+    const reportsByOrder = new Map<string, Array<Record<string, unknown>>>();
+    for (const report of reports ?? []) {
+      const orderId = String(report.lab_order_id);
+      const current = reportsByOrder.get(orderId) ?? [];
+      current.push(report as Record<string, unknown>);
+      reportsByOrder.set(orderId, current);
+    }
+
     const patientsById = new Map(
       (patients ?? []).map((patient) => [String(patient.id), patient as Record<string, unknown>])
     );
@@ -106,9 +125,20 @@ export async function GET() {
         const orders = ordersByVisit.get(String(entry.visit_id)) ?? [];
         const imports = importsByVisit.get(String(entry.visit_id)) ?? [];
         const orderItems = orders.flatMap((order) => itemsByOrder.get(String(order.id)) ?? []);
+        const reportRows = orders.flatMap((order) => reportsByOrder.get(String(order.id)) ?? []);
         const importedLanes = new Set(imports.map((item) => String(item.lane)));
 
         const hasImportedResults = imports.length > 0;
+        const reportStatus =
+          reportRows.length === 0
+            ? hasImportedResults
+              ? 'draft'
+              : 'pending'
+            : reportRows.every((report) => String(report.status) === 'released')
+              ? 'released'
+              : reportRows.some((report) => ['validated', 'released'].includes(String(report.status)))
+                ? 'validated'
+                : 'draft';
 
         return {
           queueId: String(entry.id),
@@ -131,6 +161,7 @@ export async function GET() {
             (item) => !importedLanes.has(String(item.service_lane))
           ).length,
           ready: hasImportedResults,
+          reportStatus,
         };
       })
       .filter((item) => item.orderCount > 0);

@@ -7,23 +7,68 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PageLayout } from '@/components/layout/page-layout';
-import { readPatientRecords, type PatientRecord } from '@/lib/patient-records-store';
+import type { PatientRecord } from '@/lib/patient-record-types';
 
 export default function PatientRecordsPage() {
   const [records, setRecords] = useState<PatientRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [pageError, setPageError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
 
   useEffect(() => {
-    const syncRecords = () => {
-      const nextRecords = readPatientRecords();
-      setRecords(nextRecords);
-      setSelectedPatientId((current) => current ?? nextRecords[0]?.id ?? null);
+    let isMounted = true;
+
+    const loadRecords = async () => {
+      try {
+        setPageError('');
+        setIsLoading(true);
+
+        const response = await fetch('/api/staff/patient-records', {
+          cache: 'no-store',
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          records?: PatientRecord[];
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Unable to load patient records.');
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        const nextRecords = payload.records ?? [];
+        setRecords(nextRecords);
+        setSelectedPatientId((current) =>
+          current && nextRecords.some((patient) => patient.id === current)
+            ? current
+            : nextRecords[0]?.id ?? null
+        );
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setPageError(error instanceof Error ? error.message : 'Unable to load patient records.');
+        setRecords([]);
+        setSelectedPatientId(null);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
     };
 
-    syncRecords();
-    window.addEventListener('storage', syncRecords);
-    return () => window.removeEventListener('storage', syncRecords);
+    loadRecords();
+    window.addEventListener('focus', loadRecords);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('focus', loadRecords);
+    };
   }, []);
 
   const filteredRecords = useMemo(() => {
@@ -185,7 +230,9 @@ export default function PatientRecordsPage() {
                 })
               ) : (
                 <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-                  No patient records matched the current search.
+                  {isLoading
+                    ? 'Loading patient records...'
+                    : pageError || 'No patient records matched the current search.'}
                 </div>
               )}
             </div>
@@ -206,7 +253,7 @@ export default function PatientRecordsPage() {
                           .join(' ')}
                       </h2>
                       <p className="mt-2 text-sm text-muted-foreground">
-                        {selectedPatient.birthDate} • {selectedPatient.gender} •{' '}
+                        {selectedPatient.birthDate} - {selectedPatient.gender} -{' '}
                         {selectedPatient.contactNumber}
                       </p>
                       {selectedPatient.company && (
@@ -218,7 +265,8 @@ export default function PatientRecordsPage() {
                         {selectedPatient.emailAddress}
                       </p>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        {selectedPatient.streetAddress}, {selectedPatient.city}, {selectedPatient.province}
+                        {selectedPatient.streetAddress}, {selectedPatient.city},{' '}
+                        {selectedPatient.province}
                       </p>
                     </div>
 
@@ -244,12 +292,17 @@ export default function PatientRecordsPage() {
                 <Card className="p-6">
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-bold">Visit History</h2>
-                    <span className="text-sm text-muted-foreground">{totalVisits} total visits in system</span>
+                    <span className="text-sm text-muted-foreground">
+                      {totalVisits} total visits in system
+                    </span>
                   </div>
 
                   <div className="mt-5 space-y-4">
                     {selectedPatient.visits.map((visit) => (
-                      <div key={visit.id} className="rounded-2xl border border-border bg-muted/20 p-5">
+                      <div
+                        key={visit.id}
+                        className="rounded-2xl border border-border bg-muted/20 p-5"
+                      >
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div>
                             <div className="flex items-center gap-3">
@@ -260,7 +313,7 @@ export default function PatientRecordsPage() {
                             </div>
                             <p className="mt-2 text-sm text-muted-foreground">
                               {visit.serviceType}
-                              {visit.requestedLabService ? ` • ${visit.requestedLabService}` : ''}
+                              {visit.requestedLabService ? ` - ${visit.requestedLabService}` : ''}
                             </p>
                             <p className="mt-1 text-xs text-muted-foreground">
                               Created {new Date(visit.createdAt).toLocaleString()}
@@ -280,7 +333,7 @@ export default function PatientRecordsPage() {
                               </p>
                               <p className="mt-2 font-semibold">
                                 {visit.billing
-                                  ? `${visit.billing.paymentStatus} • ${visit.billing.paymentMethod}`
+                                  ? `${visit.billing.paymentStatus} - ${visit.billing.paymentMethod}`
                                   : 'No billing yet'}
                               </p>
                             </div>
@@ -313,22 +366,37 @@ export default function PatientRecordsPage() {
                             </p>
                             <div className="mt-3 grid gap-3 md:grid-cols-2">
                               {visit.machineResults.map((result) => (
-                                <div key={result.id} className="rounded-xl border border-border bg-muted/20 p-4">
+                                <div
+                                  key={result.id}
+                                  className="rounded-xl border border-border bg-muted/20 p-4"
+                                >
                                   <p className="font-semibold">{result.lane}</p>
-                                  <p className="mt-1 text-sm text-muted-foreground">{result.testName}</p>
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    Order: {result.orderId}
+                                  <p className="mt-1 text-sm text-muted-foreground">
+                                    {result.testName}
                                   </p>
                                   <p className="mt-1 text-xs text-muted-foreground">
-                                    {result.results.length} analytes • {new Date(result.importedAt).toLocaleString()}
+                                    Order: {result.orderId || 'N/A'}
+                                  </p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {result.results.length} analytes -{' '}
+                                    {new Date(result.importedAt).toLocaleString()}
                                   </p>
                                 </div>
                               ))}
                             </div>
 
                             <div className="mt-4 flex justify-end">
-                              <Button asChild variant="outline" size="sm">
-                                <Link href={`/staff/result-release?queueId=${encodeURIComponent(visit.queueEntryId)}`}>
+                              <Button
+                                asChild
+                                variant="outline"
+                                size="sm"
+                                disabled={!visit.queueEntryId}
+                              >
+                                <Link
+                                  href={`/staff/result-release?queueId=${encodeURIComponent(
+                                    visit.queueEntryId
+                                  )}`}
+                                >
                                   Open Result Release
                                 </Link>
                               </Button>
@@ -342,7 +410,11 @@ export default function PatientRecordsPage() {
               </>
             ) : (
               <Card className="p-10 text-center text-muted-foreground">
-                Select a patient record from the directory to view details.
+                {isLoading
+                  ? 'Loading patient records...'
+                  : pageError
+                    ? pageError
+                    : 'Select a patient record from the directory to view details.'}
               </Card>
             )}
           </div>

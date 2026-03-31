@@ -7,8 +7,10 @@ import QRCode from 'qrcode';
 import { Download, Eye, EyeOff, Mail, ZoomIn, ZoomOut } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { PageLayout } from '@/components/layout/page-layout';
 import { getPublicAppUrl } from '@/lib/app-url';
+import { readStaffProfile } from '@/lib/station-role';
 import { StatusBadge } from '@/components/common/status-badge';
 import {
   LabReportTemplate,
@@ -114,10 +116,32 @@ function ResultReleasePageContent() {
     resultCount?: number;
     machineImportCount?: number;
     lanes?: string[];
+            pdfStoragePath?: string;
+            emailAddress?: string;
+            emailSentAt?: string | null;
+    hasReviewFlag?: boolean;
+    reviewNotes?: string;
+    reportStatus?: 'pending' | 'draft' | 'validated' | 'released';
+    validatedAt?: string | null;
+    releasedAt?: string | null;
+    auditLog?: Array<{
+      id: string;
+      timestamp: string;
+      title: string;
+      detail: string;
+      actor: string;
+      tone: 'default' | 'warning' | 'success';
+    }>;
   } | null>(null);
   const [softCopyQrDataUrl, setSoftCopyQrDataUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [reviewNotes, setReviewNotes] = useState('');
   const [releaseItems, setReleaseItems] = useState<
     Array<{
       queueId: string;
@@ -129,6 +153,7 @@ function ResultReleasePageContent() {
       machineImportCount: number;
       pendingLaneCount: number;
       ready: boolean;
+      reportStatus: 'pending' | 'draft' | 'validated' | 'released';
     }>
   >([]);
   const [isLoadingReleaseList, setIsLoadingReleaseList] = useState(false);
@@ -153,6 +178,7 @@ function ResultReleasePageContent() {
             machineImportCount: number;
             pendingLaneCount: number;
             ready: boolean;
+            reportStatus: 'pending' | 'draft' | 'validated' | 'released';
           }>;
         };
       })
@@ -162,7 +188,7 @@ function ResultReleasePageContent() {
         setReleaseItems([]);
       })
       .finally(() => setIsLoadingReleaseList(false));
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !queueId) {
@@ -220,6 +246,20 @@ function ResultReleasePageContent() {
             resultCount?: number;
             machineImportCount?: number;
             lanes?: string[];
+            pdfStoragePath?: string;
+            hasReviewFlag?: boolean;
+            reviewNotes?: string;
+            reportStatus?: 'pending' | 'draft' | 'validated' | 'released';
+            validatedAt?: string | null;
+            releasedAt?: string | null;
+            auditLog?: Array<{
+              id: string;
+              timestamp: string;
+              title: string;
+              detail: string;
+              actor: string;
+              tone: 'default' | 'warning' | 'success';
+            }>;
           };
         };
       })
@@ -229,6 +269,7 @@ function ResultReleasePageContent() {
           softCopyQrDataUrl,
         });
         setReportMeta(payload.meta);
+        setReviewNotes(payload.meta.reviewNotes ?? '');
       })
       .catch((error) => {
         setLoadError(error instanceof Error ? error.message : 'Unable to load report data.');
@@ -237,9 +278,96 @@ function ResultReleasePageContent() {
           softCopyQrDataUrl,
         });
         setReportMeta(null);
+        setReviewNotes('');
       })
       .finally(() => setIsLoading(false));
-  }, [queueId, softCopyQrDataUrl]);
+  }, [queueId, softCopyQrDataUrl, refreshKey]);
+
+  const handleReportAction = async (action: 'validate' | 'release' | 'flag_review') => {
+    if (!queueId || isSavingStatus) {
+      return;
+    }
+
+    try {
+      setIsSavingStatus(true);
+      setActionError('');
+      setActionNotice('');
+
+      const staffProfile = readStaffProfile();
+      const response = await fetch('/api/staff/result-release', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          queueId,
+          action,
+          staffId: staffProfile?.id ?? null,
+          reviewNotes: action === 'flag_review' ? reviewNotes.trim() : undefined,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Unable to update report status.');
+      }
+
+      setActionNotice(
+        action === 'release'
+          ? 'Report released successfully.'
+          : action === 'flag_review'
+            ? 'Visit flagged for review.'
+            : 'Report validated successfully.'
+      );
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to update report status.');
+    } finally {
+      setIsSavingStatus(false);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!queueId || isSendingEmail) {
+      return;
+    }
+
+    try {
+      setIsSendingEmail(true);
+      setActionError('');
+      setActionNotice('');
+
+      const response = await fetch('/api/staff/result-release/email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ queueId }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        emailSentAt?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Unable to send report email.');
+      }
+
+      setActionNotice('Report email sent successfully.');
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to send report email.');
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
+  const badgeStatus =
+    reportMeta?.reportStatus === 'released'
+      ? 'released'
+      : reportMeta?.reportStatus === 'validated'
+        ? 'processing'
+        : 'pending';
 
   const handlePrintReport = () => {
     if (typeof window === 'undefined' || !reportRef.current) {
@@ -586,11 +714,20 @@ function ResultReleasePageContent() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDetails((current) => !current)}
+            >
               <Eye className="mr-2 h-4 w-4" />
               Audit Log
             </Button>
-            <Button variant="destructive" size="sm">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!queueId || isSavingStatus || isLoading || (reportMeta?.resultCount ?? 0) === 0}
+              onClick={() => handleReportAction('flag_review')}
+            >
               Flag for Review
             </Button>
           </div>
@@ -646,12 +783,22 @@ function ResultReleasePageContent() {
                           <div className="flex flex-col items-end gap-2">
                             <span
                               className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                item.ready
+                                item.reportStatus === 'released'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : item.reportStatus === 'validated'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : item.ready
                                   ? 'bg-emerald-100 text-emerald-700'
                                   : 'bg-amber-100 text-amber-700'
                               }`}
                             >
-                              {item.ready ? 'Ready' : 'Pending'}
+                              {item.reportStatus === 'released'
+                                ? 'Released'
+                                : item.reportStatus === 'validated'
+                                  ? 'Validated'
+                                  : item.ready
+                                    ? 'Ready'
+                                    : 'Pending'}
                             </span>
                             {isActive && (
                               <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
@@ -702,18 +849,95 @@ function ResultReleasePageContent() {
               <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 Document Status
               </p>
-              <StatusBadge status={reportMeta?.resultCount ? 'released' : 'pending'} />
+              <StatusBadge status={badgeStatus} />
+              {reportMeta?.hasReviewFlag && (
+                <p className="mt-3 text-xs font-semibold text-amber-700">
+                  This report is flagged for review and cannot be released yet.
+                </p>
+              )}
+              {reportMeta?.validatedAt && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Validated: {new Date(reportMeta.validatedAt).toLocaleString()}
+                </p>
+              )}
+              {reportMeta?.releasedAt && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Released: {new Date(reportMeta.releasedAt).toLocaleString()}
+                </p>
+              )}
+              {reportMeta?.emailSentAt && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Emailed: {new Date(reportMeta.emailSentAt).toLocaleString()}
+                </p>
+              )}
             </Card>
 
             <Card className="space-y-3 p-6">
-              <Button className="w-full">Release Result</Button>
+              {actionError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {actionError}
+                </div>
+              )}
+              {actionNotice && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {actionNotice}
+                </div>
+              )}
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                  Review Remarks
+                </p>
+                <Textarea
+                  value={reviewNotes}
+                  onChange={(event) => setReviewNotes(event.target.value)}
+                  placeholder="Enter review remarks or exception notes..."
+                  className="min-h-24"
+                />
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={
+                  !queueId ||
+                  isSavingStatus ||
+                  isLoading ||
+                  (reportMeta?.resultCount ?? 0) === 0 ||
+                  reportMeta?.hasReviewFlag
+                }
+                onClick={() => handleReportAction('validate')}
+              >
+                {isSavingStatus ? 'Saving...' : 'Validate Report'}
+              </Button>
+              <Button
+                className="w-full"
+                disabled={
+                  !queueId ||
+                  isSavingStatus ||
+                  isLoading ||
+                  (reportMeta?.resultCount ?? 0) === 0 ||
+                  reportMeta?.hasReviewFlag
+                }
+                onClick={() => handleReportAction('release')}
+              >
+                {isSavingStatus ? 'Saving...' : 'Release Result'}
+              </Button>
               <Button variant="outline" className="w-full" onClick={handlePrintReport}>
                 <Download className="mr-2 h-4 w-4" />
                 Save as PDF
               </Button>
-              <Button variant="outline" className="w-full">
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={
+                  !queueId ||
+                  isSendingEmail ||
+                  reportMeta?.reportStatus !== 'released' ||
+                  !reportMeta?.emailAddress
+                }
+                onClick={handleSendEmail}
+              >
                 <Mail className="mr-2 h-4 w-4" />
-                Email Patient
+                {isSendingEmail ? 'Sending Email...' : 'Email Patient'}
               </Button>
             </Card>
 
@@ -737,6 +961,36 @@ function ResultReleasePageContent() {
                     Machine Imports:{' '}
                     <span className="font-medium text-foreground">
                       {reportMeta?.machineImportCount ?? 0}
+                    </span>
+                  </p>
+                  <p>
+                    Report Status:{' '}
+                    <span className="font-medium capitalize text-foreground">
+                      {reportMeta?.reportStatus ?? 'pending'}
+                    </span>
+                  </p>
+                  <p>
+                    Stored PDF:{' '}
+                    <span className="font-medium text-foreground">
+                      {reportMeta?.pdfStoragePath || 'Not generated yet'}
+                    </span>
+                  </p>
+                  <p>
+                    Patient Email:{' '}
+                    <span className="font-medium text-foreground">
+                      {reportMeta?.emailAddress || 'No email on file'}
+                    </span>
+                  </p>
+                  <p>
+                    Review Flag:{' '}
+                    <span className="font-medium text-foreground">
+                      {reportMeta?.hasReviewFlag ? 'Flagged' : 'Clear'}
+                    </span>
+                  </p>
+                  <p>
+                    Review Notes:{' '}
+                    <span className="font-medium text-foreground">
+                      {reportMeta?.reviewNotes?.trim() || 'None'}
                     </span>
                   </p>
                   <p>
@@ -801,12 +1055,37 @@ function ResultReleasePageContent() {
 
             {showDetails && (
               <Card className="p-6">
-                <h3 className="text-lg font-bold">Template Coverage</h3>
-                <div className="mt-4 grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
-                  <p>Includes patient demographics and company details.</p>
-                  <p>Supports hematology, urinalysis, fecalysis, and other lab panels.</p>
-                  <p>Includes x-ray narrative and impression block.</p>
-                  <p>Includes medical diagnosis, recommendations, and signatories.</p>
+                <h3 className="text-lg font-bold">Audit Log</h3>
+                <div className="mt-4 space-y-3">
+                  {(reportMeta?.auditLog?.length ?? 0) > 0 ? (
+                    reportMeta?.auditLog?.map((event) => (
+                      <div
+                        key={event.id}
+                        className={`rounded-xl border px-4 py-3 text-sm ${
+                          event.tone === 'warning'
+                            ? 'border-amber-200 bg-amber-50'
+                            : event.tone === 'success'
+                              ? 'border-emerald-200 bg-emerald-50'
+                              : 'border-border bg-muted/20'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold">{event.title}</p>
+                            <p className="mt-1 text-muted-foreground">{event.detail}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">By {event.actor}</p>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(event.timestamp).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                      No audit events recorded yet.
+                    </div>
+                  )}
                 </div>
               </Card>
             )}

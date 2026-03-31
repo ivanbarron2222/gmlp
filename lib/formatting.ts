@@ -29,7 +29,11 @@ export function calculateAge(birthDate: Date): number {
 }
 
 export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    minimumFractionDigits: 2,
+  }).format(amount);
 }
 
 export function formatTestResult(value: number | string): string {

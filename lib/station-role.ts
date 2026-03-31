@@ -2,6 +2,7 @@ import { QueueEntry, QueueLane } from '@/lib/queue-store';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export type StationRole =
+  | 'admin'
   | 'nurse'
   | 'blood-test'
   | 'drug-test'
@@ -10,6 +11,7 @@ export type StationRole =
   | 'cashier';
 
 export const stationRoles: StationRole[] = [
+  'admin',
   'nurse',
   'blood-test',
   'drug-test',
@@ -30,6 +32,8 @@ export interface StaffProfileSession {
 
 export function getRoleLabel(role: StationRole) {
   switch (role) {
+    case 'admin':
+      return 'System Administrator';
     case 'nurse':
       return 'Nurse / Reception';
     case 'blood-test':
@@ -107,6 +111,8 @@ export function clearStationRole() {
 
 export function mapDbRoleToStationRole(role: string): StationRole | null {
   switch (role) {
+    case 'admin':
+      return 'admin';
     case 'nurse':
       return 'nurse';
     case 'blood_test':
@@ -191,6 +197,8 @@ export function getRoleLane(role: StationRole): QueueLane | null {
 
 export function getRoleHomePath(role: StationRole) {
   switch (role) {
+    case 'admin':
+      return '/dashboard';
     case 'nurse':
       return '/staff/patient-registration';
     case 'blood-test':
@@ -207,6 +215,10 @@ export function getRoleHomePath(role: StationRole) {
 }
 
 export function resolveScanRedirect(role: StationRole, entry: QueueEntry) {
+  if (role === 'admin') {
+    return null;
+  }
+
   if (role === 'nurse') {
     return `/staff/patient-registration?queueId=${entry.id}`;
   }

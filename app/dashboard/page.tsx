@@ -13,7 +13,7 @@ import {
   mockRecentPatients, 
   mockPendingValidations 
 } from '@/lib/mock-data';
-import { formatTime } from '@/lib/formatting';
+import { formatCurrency, formatTime } from '@/lib/formatting';
 import type { QueueEntry } from '@/lib/queue-store';
 import { fetchQueueEntries } from '@/lib/queue-api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -100,7 +100,7 @@ export default function DashboardPage() {
           />
           <MetricCard
             label="REVENUE TODAY"
-            value={`$${mockDashboardMetrics.revenueToday.value.toLocaleString()}`}
+            value={formatCurrency(mockDashboardMetrics.revenueToday.value)}
             change={mockDashboardMetrics.revenueToday.change}
             icon={<DollarSign className="w-5 h-5 text-primary" />}
           />

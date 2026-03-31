@@ -1,4 +1,4 @@
-import { MachineResultItem } from '@/lib/patient-records-store';
+import type { MachineResultItem } from '@/lib/patient-record-types';
 
 export interface ParsedMachineResult {
   orderId: string;

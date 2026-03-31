@@ -14,6 +14,14 @@ insert into public.staff_profiles (
 )
 values
   (
+    '11111111-1111-1111-1111-111111111111',
+    'admin@globalife.local',
+    'System Administrator',
+    'admin',
+    null,
+    true
+  ),
+  (
     'a1aa6f73-6179-4d9b-b8f6-244fa8fe1188',
     'nurse@globalife.local',
     'Nurse / Reception',
