@@ -1,0 +1,895 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
+import { AlertCircle, Printer, QrCode } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { PageLayout } from '@/components/layout/page-layout';
+import { getPublicAppUrl } from '@/lib/app-url';
+import {
+  fetchPendingRegistrations,
+  PendingRegistration,
+} from '@/lib/registration-store';
+import { createPatientVisitRecord } from '@/lib/patient-records-store';
+import {
+  getQueueScanPath,
+  QueueEntry,
+} from '@/lib/queue-store';
+
+const defaultFormData = {
+  firstName: '',
+  middleName: '',
+  lastName: '',
+  company: '',
+  birthDate: '',
+  gender: 'male',
+  contactNumber: '',
+  emailAddress: '',
+  streetAddress: '',
+  city: '',
+  province: '',
+  serviceNeeded: 'Check-Up',
+  requestedLabService: '',
+  notes: '',
+};
+
+export default function PatientRegistrationPage() {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDuplicateAlert, setShowDuplicateAlert] = useState(false);
+  const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
+  const [selectedRegistrationId, setSelectedRegistrationId] = useState<string | null>(null);
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [pageError, setPageError] = useState('');
+  const [queuedEntry, setQueuedEntry] = useState<QueueEntry | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
+  const [formData, setFormData] = useState(defaultFormData);
+
+  useEffect(() => {
+    fetchPendingRegistrations()
+      .then((registrations) => setPendingRegistrations(registrations))
+      .catch((error) =>
+        setPageError(
+          error instanceof Error ? error.message : 'Unable to load pending registrations.'
+        )
+      );
+  }, []);
+
+  useEffect(() => {
+    if (!queuedEntry || typeof window === 'undefined') {
+      setQrCodeDataUrl('');
+      return;
+    }
+
+    const appUrl = getPublicAppUrl();
+
+    if (!appUrl) {
+      setQrCodeDataUrl('');
+      return;
+    }
+
+    const scanUrl = `${appUrl}${getQueueScanPath(queuedEntry.id)}`;
+
+    QRCode.toDataURL(scanUrl, {
+      width: 192,
+      margin: 1,
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff',
+      },
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [queuedEntry]);
+
+  const selectedRegistration = useMemo(
+    () => pendingRegistrations.find((item) => item.id === selectedRegistrationId) ?? null,
+    [pendingRegistrations, selectedRegistrationId]
+  );
+
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      ...(name === 'serviceNeeded' && value !== 'Lab' ? { requestedLabService: '' } : {}),
+      [name]: value,
+    }));
+  };
+
+  const handleSearch = () => {
+    if (searchQuery.toLowerCase().includes('john')) {
+      setShowDuplicateAlert(true);
+    } else {
+      setShowDuplicateAlert(false);
+    }
+  };
+
+  const handleClear = () => {
+    setFormData(defaultFormData);
+    setShowDuplicateAlert(false);
+    setSelectedRegistrationId(null);
+    setVerificationMessage('');
+    setQueuedEntry(null);
+    setIsFormOpen(false);
+    setPageError('');
+  };
+
+  const handleOpenManualForm = () => {
+    setSelectedRegistrationId(null);
+    setFormData(defaultFormData);
+    setVerificationMessage('');
+    setIsFormOpen(true);
+  };
+
+  const handleLoadRegistration = (registration: PendingRegistration) => {
+    setSelectedRegistrationId(registration.id);
+    setFormData({
+      firstName: registration.firstName,
+      middleName: registration.middleName,
+      lastName: registration.lastName,
+      company: registration.company,
+      birthDate: registration.birthDate,
+      gender: registration.gender,
+      contactNumber: registration.contactNumber,
+      emailAddress: registration.emailAddress,
+      streetAddress: registration.streetAddress,
+      city: registration.city,
+      province: registration.province,
+      serviceNeeded: registration.serviceNeeded,
+      requestedLabService: registration.requestedLabService,
+      notes: registration.notes,
+    });
+    setVerificationMessage('');
+    setIsFormOpen(true);
+  };
+
+  const handleVerifyAndQueue = async () => {
+    const fullName = [formData.firstName, formData.middleName, formData.lastName]
+      .filter(Boolean)
+      .join(' ');
+    setPageError('');
+
+    try {
+      const response = await fetch('/api/staff/verify-registration', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          registrationId: selectedRegistrationId,
+          formData,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Unable to verify and queue patient.');
+      }
+
+      const payload = (await response.json()) as {
+        patient: {
+          firstName: string;
+          middleName: string;
+          lastName: string;
+          company: string;
+          birthDate: string;
+          gender: string;
+          contactNumber: string;
+          emailAddress: string;
+          streetAddress: string;
+          city: string;
+          province: string;
+          notes: string;
+        };
+        queueEntry: QueueEntry;
+      };
+
+      createPatientVisitRecord(
+        {
+          firstName: payload.patient.firstName,
+          middleName: payload.patient.middleName,
+          lastName: payload.patient.lastName,
+          company: payload.patient.company,
+          birthDate: payload.patient.birthDate,
+          gender: payload.patient.gender,
+          contactNumber: payload.patient.contactNumber,
+          emailAddress: payload.patient.emailAddress,
+          streetAddress: payload.patient.streetAddress,
+          city: payload.patient.city,
+          province: payload.patient.province,
+          notes: payload.patient.notes,
+          serviceNeeded: formData.serviceNeeded as 'Pre-Employment' | 'Check-Up' | 'Lab',
+          requestedLabService: formData.requestedLabService,
+        },
+        payload.queueEntry
+      );
+
+      const registrations = await fetchPendingRegistrations();
+      setPendingRegistrations(registrations);
+      setVerificationMessage(`${fullName} has been verified and added to the queue.`);
+      setQueuedEntry(payload.queueEntry);
+      setSelectedRegistrationId(null);
+      setFormData(defaultFormData);
+      setIsFormOpen(false);
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : 'Unable to verify and queue patient.'
+      );
+    }
+  };
+
+  const handlePrintSlip = () => {
+    if (!queuedEntry || typeof window === 'undefined') {
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=420,height=720');
+
+    if (!printWindow) {
+      return;
+    }
+
+    const qrMarkup = qrCodeDataUrl
+      ? `<img src="${qrCodeDataUrl}" alt="QR code for ${queuedEntry.queueNumber}" style="width:176px;height:176px;border:1px solid #e2e8f0;border-radius:12px;" />`
+      : `<div style="width:176px;height:176px;display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:12px;color:#64748b;font-size:14px;">Generating QR...</div>`;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Queue Slip ${queuedEntry.queueNumber}</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 24px;
+              font-family: Arial, sans-serif;
+              background: #ffffff;
+              color: #0f172a;
+            }
+            .slip {
+              border: 1px solid #cbd5e1;
+              border-radius: 18px;
+              padding: 24px;
+              max-width: 340px;
+              margin: 0 auto;
+              text-align: center;
+            }
+            .brand {
+              font-size: 11px;
+              font-weight: 700;
+              letter-spacing: 0.22em;
+              text-transform: uppercase;
+              color: #0b65b1;
+            }
+            .title {
+              margin-top: 10px;
+              font-size: 24px;
+              font-weight: 700;
+            }
+            .queue {
+              margin-top: 10px;
+              font-size: 52px;
+              font-weight: 900;
+              color: #0b65b1;
+              line-height: 1;
+            }
+            .qr {
+              margin-top: 18px;
+              display: flex;
+              justify-content: center;
+            }
+            .meta {
+              margin-top: 16px;
+              font-size: 14px;
+              line-height: 1.6;
+              color: #475569;
+            }
+            .meta strong {
+              color: #0f172a;
+            }
+            .note {
+              margin-top: 14px;
+              font-size: 12px;
+              color: #64748b;
+            }
+            @page {
+              size: auto;
+              margin: 12mm;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="slip">
+            <div class="brand">Globalife Medical Laboratory &amp; Polyclinic</div>
+            <div class="title">Queue Slip</div>
+            <div class="queue">${queuedEntry.queueNumber}</div>
+            <div class="qr">${qrMarkup}</div>
+            <div class="meta">
+              <div><strong>${queuedEntry.patientName}</strong></div>
+              <div>${queuedEntry.serviceType}</div>
+              <div>${new Date(queuedEntry.createdAt).toLocaleString()}</div>
+            </div>
+            <div class="note">Scan this code at any station to open the active visit queue.</div>
+          </div>
+          <script>
+            window.onload = function () {
+              window.print();
+              window.onafterprint = function () { window.close(); };
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  return (
+    <PageLayout>
+      <div className="px-8 py-8">
+        <div>
+          <h1 className="text-3xl font-bold">Patient Registration</h1>
+          <p className="mt-2 text-muted-foreground">
+            Review self-registrations, verify patient details, and create the active queue record.
+          </p>
+        </div>
+
+        <Card className="mt-8 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold">Pending Self-Registrations</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                New submissions from `/register` appear here for nurse verification.
+              </p>
+            </div>
+            <div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
+              {pendingRegistrations.length} pending
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-3 xl:grid-cols-2">
+            {pendingRegistrations.length > 0 ? (
+              pendingRegistrations.map((registration) => (
+                <div
+                  key={registration.id}
+                  className={`rounded-xl border p-4 transition-colors ${
+                    selectedRegistrationId === registration.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-background'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">
+                        {[registration.firstName, registration.middleName, registration.lastName]
+                          .filter(Boolean)
+                          .join(' ')}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {registration.serviceNeeded}
+                        {registration.requestedLabService ? ` • ${registration.requestedLabService}` : ''}
+                      </p>
+                      {registration.company && (
+                        <p className="mt-1 text-xs text-muted-foreground">{registration.company}</p>
+                      )}
+                    </div>
+                    <Button variant="outline" onClick={() => handleLoadRegistration(registration)}>
+                      Load Form
+                    </Button>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <p>
+                      Birthdate: <span className="text-foreground">{registration.birthDate}</span>
+                    </p>
+                    <p>
+                      Contact:{' '}
+                      <span className="text-foreground">{registration.contactNumber}</span>
+                    </p>
+                    <p>
+                      Email:{' '}
+                      <span className="text-foreground">{registration.emailAddress}</span>
+                    </p>
+                    <p>
+                      Address:{' '}
+                      <span className="text-foreground">{`${registration.city}, ${registration.province}`}</span>
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground xl:col-span-2">
+                No pending self-registrations yet. New `/register` submissions will appear here.
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {pageError && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {pageError}
+          </div>
+        )}
+
+        <Card className="mt-8 p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex-1">
+              <label className="mb-2 block text-sm font-semibold text-muted-foreground">
+                PRE-REGISTRATION CHECK
+              </label>
+              <Input
+                placeholder="Scan ID or enter Name/Patient ID to check duplicates..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-12"
+              />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button className="h-12 px-6" variant="outline" onClick={handleOpenManualForm}>
+                New Registration
+              </Button>
+              <Button className="h-12 px-6" onClick={handleSearch}>
+                Verify Identity
+              </Button>
+            </div>
+          </div>
+        </Card>
+
+        {showDuplicateAlert && (
+          <div className="mt-6 flex gap-4 rounded-lg border border-red-200 bg-red-50 p-4">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
+            <div className="flex-1">
+              <h3 className="mb-2 font-semibold text-red-900">Possible Duplicate Detected</h3>
+              <p className="mb-3 text-sm text-red-800">
+                A patient with the name &quot;John D. Miller&quot; and same birthdate was found in
+                the database. Please verify before proceeding.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="border-red-200 text-red-600">
+                  View Existing Record
+                </Button>
+                <Button variant="outline" className="border-red-200 text-red-600">
+                  Ignore and Continue
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <Card className="mt-8 p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-lg font-bold">Registration Workspace</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Open the verification form in a modal to review a self-registration or create a manual walk-in entry.
+              </p>
+            </div>
+            <Button onClick={handleOpenManualForm}>Open Registration Form</Button>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border bg-muted/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Source
+              </p>
+              <p className="mt-2 text-base font-semibold text-foreground">
+                {selectedRegistration ? 'Self-Registration' : 'Manual Nurse Intake'}
+              </p>
+            </div>
+            <div className="rounded-xl border bg-muted/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Patient
+              </p>
+              <p className="mt-2 text-base font-semibold text-foreground">
+                {[formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' ') || 'No form loaded'}
+              </p>
+            </div>
+            <div className="rounded-xl border bg-muted/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Service
+              </p>
+              <p className="mt-2 text-base font-semibold text-foreground">
+                {formData.serviceNeeded}
+                {formData.serviceNeeded === 'Lab' && formData.requestedLabService
+                  ? ` · ${formData.requestedLabService}`
+                  : ''}
+              </p>
+            </div>
+            <div className="rounded-xl border bg-muted/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Status
+              </p>
+              <p className="mt-2 text-base font-semibold text-foreground">
+                {selectedRegistration
+                  ? `Loaded ${new Date(selectedRegistration.submittedAt).toLocaleString()}`
+                  : 'Ready for verification'}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        {verificationMessage && (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {verificationMessage}
+          </div>
+        )}
+
+        {queuedEntry && (
+          <Card className="mt-8 border-primary/20 bg-primary/5 p-6 print:mt-0 print:border print:bg-white">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-xl">
+                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-primary">
+                  <QrCode className="h-4 w-4" />
+                  Queue Slip Ready
+                </div>
+                <h2 className="mt-3 text-3xl font-bold">{queuedEntry.queueNumber}</h2>
+                <p className="mt-2 text-base font-medium text-foreground">
+                  {queuedEntry.patientName}
+                </p>
+                <div className="mt-4 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                  <p>
+                    Service: <span className="font-medium text-foreground">{queuedEntry.serviceType}</span>
+                  </p>
+                  <p>
+                    Intake Lane: <span className="font-medium text-foreground">{queuedEntry.counter}</span>
+                  </p>
+                  <p>
+                    Created: <span className="font-medium text-foreground">{new Date(queuedEntry.createdAt).toLocaleString()}</span>
+                  </p>
+                  <p>
+                    Scan Route: <span className="font-medium text-foreground">{getQueueScanPath(queuedEntry.id)}</span>
+                  </p>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-3 print:hidden">
+                  <Button onClick={handlePrintSlip} className="gap-2">
+                    <Printer className="h-4 w-4" />
+                    Print Slip
+                  </Button>
+                </div>
+              </div>
+
+              <div className="w-full max-w-xs rounded-2xl border bg-white p-5 shadow-sm print:shadow-none">
+                <div className="text-center">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+                    Globalife Medical Laboratory &amp; Polyclinic
+                  </p>
+                  <p className="mt-2 text-xl font-bold">Queue Slip</p>
+                  <p className="mt-1 text-4xl font-black tracking-tight text-primary">
+                    {queuedEntry.queueNumber}
+                  </p>
+                </div>
+
+                <div className="mt-4 flex justify-center">
+                  {qrCodeDataUrl ? (
+                    <img
+                      src={qrCodeDataUrl}
+                      alt={`QR code for ${queuedEntry.queueNumber}`}
+                      className="h-44 w-44 rounded-lg border"
+                    />
+                  ) : (
+                    <div className="flex h-44 w-44 items-center justify-center rounded-lg border bg-muted text-sm text-muted-foreground">
+                      Generating QR...
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-1 text-center text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">{queuedEntry.patientName}</p>
+                  <p>{queuedEntry.serviceType}</p>
+                  <p>Scan at any station to open the active visit queue.</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        <div className="mt-8 grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="flex items-center gap-3 rounded-lg bg-muted p-4">
+            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
+            </svg>
+            <div className="text-sm">
+              <p className="font-semibold">Verified Intake</p>
+              <p className="text-xs text-muted-foreground">Self-registration reviewed before queueing</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-lg bg-muted p-4">
+            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 1C6.48 1 2 5.48 2 11s4.48 10 10 10 10-4.48 10-10S17.52 1 12 1zm-2 15l-5-5 1.41-1.41L10 12.17l7.59-7.59L19 6l-9 9z" />
+            </svg>
+            <div className="text-sm">
+              <p className="font-semibold">Queue Ready</p>
+              <p className="text-xs text-muted-foreground">Verified patients go directly into the active queue</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-lg bg-muted p-4">
+            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 1C6.48 1 2 5.48 2 11s4.48 10 10 10 10-4.48 10-10S17.52 1 12 1zm-2 15l-5-5 1.41-1.41L10 12.17l7.59-7.59L19 6l-9 9z" />
+            </svg>
+            <div className="text-sm">
+              <p className="font-semibold">Visit Context</p>
+              <p className="text-xs text-muted-foreground">Prepared for slip printing and scan-based station routing</p>
+            </div>
+          </div>
+        </div>
+
+        <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+          <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto p-0 sm:max-w-6xl">
+            <DialogHeader className="border-b px-6 py-5">
+              <DialogTitle className="text-2xl">Patient Verification Form</DialogTitle>
+              <DialogDescription>
+                {selectedRegistration
+                  ? `Review the submitted /register details, complete any missing fields, then verify and queue the patient.`
+                  : 'Use the nurse intake form to register and queue a walk-in patient.'}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="px-6 py-6">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <Card className="p-6">
+                  <div className="mb-6 flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                      <svg className="h-5 w-5 text-primary" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                      </svg>
+                    </div>
+                    <h2 className="text-lg font-bold">Personal Information</h2>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        FIRST NAME
+                      </label>
+                      <Input
+                        name="firstName"
+                        placeholder="e.g. Alexander"
+                        value={formData.firstName}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        MIDDLE NAME
+                      </label>
+                      <Input
+                        name="middleName"
+                        placeholder="Optional"
+                        value={formData.middleName}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        LAST NAME
+                      </label>
+                      <Input
+                        name="lastName"
+                        placeholder="e.g. Thompson"
+                        value={formData.lastName}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        COMPANY
+                      </label>
+                      <Input
+                        name="company"
+                        placeholder="Company or employer"
+                        value={formData.company}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        BIRTHDATE
+                      </label>
+                      <Input
+                        type="date"
+                        name="birthDate"
+                        value={formData.birthDate}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        GENDER
+                      </label>
+                      <select
+                        name="gender"
+                        value={formData.gender}
+                        onChange={handleInputChange}
+                        className="h-11 w-full rounded-lg border border-border bg-muted px-3 text-foreground"
+                      >
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        SERVICE NEEDED
+                      </label>
+                      <select
+                        name="serviceNeeded"
+                        value={formData.serviceNeeded}
+                        onChange={handleInputChange}
+                        className="h-11 w-full rounded-lg border border-border bg-muted px-3 text-foreground"
+                      >
+                        <option value="Pre-Employment">Pre-Employment</option>
+                        <option value="Check-Up">Check-Up</option>
+                        <option value="Lab">Lab</option>
+                      </select>
+                    </div>
+
+                    {formData.serviceNeeded === 'Lab' && (
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                          LAB SERVICE
+                        </label>
+                        <select
+                          name="requestedLabService"
+                          value={formData.requestedLabService}
+                          onChange={handleInputChange}
+                          className="h-11 w-full rounded-lg border border-border bg-muted px-3 text-foreground"
+                        >
+                          <option value="">Select a lab service</option>
+                          <option value="Blood Test">Blood Test</option>
+                          <option value="Drug Test">Drug Test</option>
+                          <option value="Xray">Xray</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <div className="mb-6 flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100">
+                      <svg className="h-5 w-5 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
+                      </svg>
+                    </div>
+                    <h2 className="text-lg font-bold">Contact &amp; Address</h2>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        CONTACT NUMBER
+                      </label>
+                      <Input
+                        name="contactNumber"
+                        placeholder="+63912 345 6789"
+                        value={formData.contactNumber}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        EMAIL ADDRESS
+                      </label>
+                      <Input
+                        type="email"
+                        name="emailAddress"
+                        placeholder="patient@example.com"
+                        value={formData.emailAddress}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        STREET ADDRESS
+                      </label>
+                      <Input
+                        name="streetAddress"
+                        placeholder="Street name, building, barangay"
+                        value={formData.streetAddress}
+                        onChange={handleInputChange}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                          CITY
+                        </label>
+                        <Input
+                          name="city"
+                          placeholder="City"
+                          value={formData.city}
+                          onChange={handleInputChange}
+                          className="h-11"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                          PROVINCE
+                        </label>
+                        <Input
+                          name="province"
+                          placeholder="Province"
+                          value={formData.province}
+                          onChange={handleInputChange}
+                          className="h-11"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                        NOTES
+                      </label>
+                      <Textarea
+                        name="notes"
+                        placeholder="Reception or nurse notes"
+                        value={formData.notes}
+                        onChange={handleInputChange}
+                        className="min-h-24"
+                      />
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            </div>
+
+            <DialogFooter className="border-t px-6 py-4">
+              <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10">
+                    <svg className="h-4 w-4 text-primary" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                    </svg>
+                  </div>
+                  <span>
+                    {selectedRegistration
+                      ? `Loaded self-registration from ${new Date(selectedRegistration.submittedAt).toLocaleString()}`
+                      : 'Manual nurse registration and verification'}
+                  </span>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" onClick={handleClear}>
+                    Clear Form
+                  </Button>
+                  <Button className="px-8" onClick={handleVerifyAndQueue}>
+                    Verify &amp; Queue Patient
+                  </Button>
+                </div>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </PageLayout>
+  );
+}

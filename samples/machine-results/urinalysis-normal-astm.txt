@@ -1,0 +1,14 @@
+H|\^&|||UrineAnalyzer|||||||P|1
+P|1||000125||SANTOS^MARIA
+O|1|LAB-002||URINALYSIS
+R|1|COLOR^Color||Yellow|||N
+R|2|TURB^Turbidity||Clear|||N
+R|3|SPGR^Specific Gravity||1.020||1.005-1.030|N
+R|4|PH^Reaction||6.0||4.5-8.0|N
+R|5|SUGAR^Sugar||Negative|||N
+R|6|PRO^Protein||Negative|||N
+R|7|RBC^Red Blood Cells||0-2|/HPF|0-2|N
+R|8|WBC^White Blood Cells||0-2|/HPF|0-4|N
+R|9|BACT^Bacteria||Rare|||N
+R|10|EPIT^Epithelial Cell||Rare|||N
+L|1|N
