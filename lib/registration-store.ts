@@ -147,7 +147,9 @@ export async function addPendingRegistration(registration: RegistrationFormInput
     return nextRegistration;
   }
 
-  const { data, error } = await supabase
+  const submittedAt = new Date().toISOString();
+
+  const { error } = await supabase
     .from('self_registrations')
     .insert({
       registration_code: buildRegistrationCode(),
@@ -165,15 +167,17 @@ export async function addPendingRegistration(registration: RegistrationFormInput
       service_needed: toDbService(registration.serviceNeeded),
       requested_lab_service: toDbLabService(registration.requestedLabService),
       notes: registration.notes || null,
-    })
-    .select()
-    .single();
+    });
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return mapDbRegistration(data as Record<string, unknown>);
+  return {
+    id: `submitted-${Date.now()}`,
+    submittedAt,
+    ...registration,
+  } satisfies PendingRegistration;
 }
 
 export async function fetchPendingRegistrations() {
