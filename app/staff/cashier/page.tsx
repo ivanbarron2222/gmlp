@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { CreditCard, Percent, ReceiptText, Wallet } from 'lucide-react';
+import { CreditCard, Percent, Printer, ReceiptText, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +37,7 @@ function CashierPageContent() {
     };
     visit: {
       queueNumber: string;
+      labNumbers: string[];
       patientName: string;
       serviceType: string;
       requestedLabService: string;
@@ -100,6 +101,7 @@ function CashierPageContent() {
           };
           visit: {
             queueNumber: string;
+            labNumbers: string[];
             patientName: string;
             serviceType: string;
             requestedLabService: string;
@@ -171,6 +173,102 @@ function CashierPageContent() {
         ? selectedServices.filter((item) => item.id !== service.id)
         : [...selectedServices, service]
     );
+  };
+
+  const handlePrintSlip = () => {
+    if (!visitContext || typeof window === 'undefined') {
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=420,height=720');
+
+    if (!printWindow) {
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Queue Slip ${visit.queueNumber}</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 24px;
+              font-family: Arial, sans-serif;
+              background: #ffffff;
+              color: #0f172a;
+            }
+            .slip {
+              border: 1px solid #cbd5e1;
+              border-radius: 18px;
+              padding: 24px;
+              max-width: 340px;
+              margin: 0 auto;
+              text-align: center;
+            }
+            .brand {
+              font-size: 11px;
+              font-weight: 700;
+              letter-spacing: 0.22em;
+              text-transform: uppercase;
+              color: #0b65b1;
+            }
+            .title {
+              margin-top: 10px;
+              font-size: 24px;
+              font-weight: 700;
+            }
+            .queue {
+              margin-top: 10px;
+              font-size: 52px;
+              font-weight: 900;
+              color: #0b65b1;
+              line-height: 1;
+            }
+            .meta {
+              margin-top: 16px;
+              font-size: 14px;
+              line-height: 1.6;
+              color: #475569;
+            }
+            .meta strong {
+              color: #0f172a;
+            }
+            .note {
+              margin-top: 14px;
+              font-size: 12px;
+              color: #64748b;
+            }
+            @page {
+              size: auto;
+              margin: 12mm;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="slip">
+            <div class="brand">Globalife Medical Laboratory &amp; Polyclinic</div>
+            <div class="title">Queue Slip</div>
+            <div class="queue">${visit.queueNumber}</div>
+            <div class="meta">
+              <div><strong>${visit.patientName}</strong></div>
+              <div>${visit.labNumbers.length > 0 ? `Lab No: ${visit.labNumbers.join(', ')}` : 'Lab No: N/A'}</div>
+              <div>${visit.serviceType}${visit.requestedLabService ? ` - ${visit.requestedLabService}` : ''}</div>
+              <div>${new Date().toLocaleString()}</div>
+            </div>
+            <div class="note">Present this queue number at the assigned station for staff processing.</div>
+          </div>
+          <script>
+            window.onload = function () {
+              window.print();
+              window.onafterprint = function () { window.close(); };
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const handleSaveBilling = async (status: BillingRecord['paymentStatus']) => {
@@ -253,8 +351,8 @@ function CashierPageContent() {
           <div>
             <h1 className="text-3xl font-bold">Cashier / Billing</h1>
             <p className="mt-2 text-muted-foreground">
-              Persist billing against the active queue-linked visit so it becomes part of the
-              patient record.
+              Handle front desk billing and print the queue slip for the active visit once the
+              patient is ready to proceed.
             </p>
           </div>
           <Button asChild variant="outline">
@@ -283,6 +381,12 @@ function CashierPageContent() {
                   Service: <span className="font-medium text-foreground">{visit.serviceType}</span>
                 </p>
                 <p>
+                  Lab Number:{' '}
+                  <span className="font-medium text-foreground">
+                    {visit.labNumbers.length > 0 ? visit.labNumbers.join(', ') : 'N/A'}
+                  </span>
+                </p>
+                <p>
                   Lab Request:{' '}
                   <span className="font-medium text-foreground">
                     {visit.requestedLabService || 'N/A'}
@@ -296,6 +400,13 @@ function CashierPageContent() {
                   Email:{' '}
                   <span className="font-medium text-foreground">{patient.emailAddress || 'N/A'}</span>
                 </p>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Button variant="outline" onClick={handlePrintSlip} className="gap-2">
+                  <Printer className="h-4 w-4" />
+                  Print Queue Slip
+                </Button>
               </div>
             </Card>
 

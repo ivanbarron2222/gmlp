@@ -124,6 +124,22 @@ export function getQueueScanPath(queueId: string) {
   return `/scan/queue/${queueId}`;
 }
 
+export function getQueueVisitPath(queueId: string) {
+  return `/staff/patient-records?queueId=${encodeURIComponent(queueId)}`;
+}
+
+export function getQueueWorkflowPath(queueId: string, lane: QueueLane) {
+  if (lane === 'DOCTOR') {
+    return `/staff/result-encoding?queueId=${encodeURIComponent(queueId)}&lane=${encodeURIComponent(
+      lane
+    )}`;
+  }
+
+  return `/staff/lab-orders?queueId=${encodeURIComponent(queueId)}&lane=${encodeURIComponent(
+    lane
+  )}`;
+}
+
 export function addQueueEntry(
   queue: QueueEntry[],
   input: {
@@ -160,7 +176,21 @@ export function writeQueue(queue: QueueEntry[]) {
 }
 
 export function getNextQueueNumber(queue: QueueEntry[]) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const todayInManila = formatter.format(new Date());
+
   const maxNumber = queue.reduce((highest, item) => {
+    const itemDay = item.createdAt ? formatter.format(new Date(item.createdAt)) : '';
+
+    if (itemDay !== todayInManila) {
+      return highest;
+    }
+
     const numericPart = Number.parseInt(item.queueNumber.split('-')[1] ?? '0', 10);
     return Number.isNaN(numericPart) ? highest : Math.max(highest, numericPart);
   }, 0);

@@ -3,12 +3,12 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Beaker, FileUp, QrCode, ScanLine } from 'lucide-react';
+import { Beaker, FileUp, ScanLine } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchQueueEntry, postQueueAction } from '@/lib/queue-api';
-import { getQueueScanPath, QueueEntry, QueueLane } from '@/lib/queue-store';
+import { getQueueVisitPath, QueueEntry, QueueLane } from '@/lib/queue-store';
 import {
   findVisitByQueueEntryId,
   MachineResultImport,
@@ -212,12 +212,12 @@ function LabOrdersPageContent() {
             <h1 className="mt-2 text-3xl font-bold">Scanned Patient Workflow</h1>
             <p className="mt-2 text-muted-foreground">
               {lane === 'BLOOD TEST'
-                ? 'Use the scanned queue context to handle CBC or urinalysis under the BLOOD TEST station and return the patient to general intake once done.'
-                : 'Use the scanned queue context to start this lab step and return the patient to general intake once done.'}
+                ? 'Use the selected queue visit to handle CBC or urinalysis under the BLOOD TEST station and return the patient to general intake once done.'
+                : 'Use the selected queue visit to handle this lab step and return the patient to general intake once done.'}
             </p>
           </div>
           <Button asChild variant="outline">
-            <Link href={getQueueScanPath(entry.id)}>Open QR Context</Link>
+            <Link href={getQueueVisitPath(entry.id)}>View Patient Visit</Link>
           </Button>
         </div>
 
@@ -233,7 +233,7 @@ function LabOrdersPageContent() {
                 </p>
               </div>
               <div className="rounded-full bg-primary/10 p-3 text-primary">
-                <QrCode className="h-7 w-7" />
+                <FileUp className="h-7 w-7" />
               </div>
             </div>
 
@@ -274,7 +274,7 @@ function LabOrdersPageContent() {
                 <div>
                   <h2 className="text-xl font-bold">Station Actions</h2>
                   <p className="text-sm text-muted-foreground">
-                    This screen is opened automatically after scanning the patient slip at the{' '}
+                    This screen is opened directly from queue management for the{' '}
                     {lane} station.
                   </p>
                 </div>

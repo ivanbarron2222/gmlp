@@ -1,56 +1,133 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { Users, AlertTriangle, CheckCircle2, DollarSign, Eye } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CreditCard,
+  DollarSign,
+  Eye,
+  FileBarChart2,
+  FlaskConical,
+  UserPlus,
+  Users,
+} from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageLayout } from '@/components/layout/page-layout';
 import { MetricCard } from '@/components/common/metric-card';
 import { StatusBadge } from '@/components/common/status-badge';
-import { 
-  mockDashboardMetrics, 
-  mockRecentPatients, 
-  mockPendingValidations 
-} from '@/lib/mock-data';
-import { formatCurrency, formatTime } from '@/lib/formatting';
-import type { QueueEntry } from '@/lib/queue-store';
-import { fetchQueueEntries } from '@/lib/queue-api';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { formatCurrency } from '@/lib/formatting';
 
-const patientFlowData = [
-  { time: '08:00', count: 12 },
-  { time: '10:00', count: 28 },
-  { time: '12:00', count: 35 },
-  { time: '14:00', count: 22 },
-  { time: '16:00', count: 38 },
-  { time: '18:00', count: 32 },
-  { time: '20:00', count: 18 },
-];
+type DashboardPayload = {
+  metrics: {
+    patientsToday: number;
+    pendingTests: number;
+    releasedResults: number;
+    revenueToday: number;
+  };
+  patientFlow: Array<{ time: string; count: number }>;
+  serviceBreakdown: Array<{ service: string; count: number }>;
+  revenueTrend: Array<{ date: string; label: string; amount: number }>;
+  recentPatients: Array<{
+    id: string;
+    name: string;
+    requestTime: string;
+    status: 'pending' | 'processing' | 'released';
+    queueNumber: string;
+  }>;
+  liveQueue: Array<{
+    id: string;
+    queueNumber: string;
+    currentLane: string;
+    serviceType: string;
+  }>;
+  pendingValidations: Array<{
+    id: string;
+    testName: string;
+    patient: string;
+    priority: 'urgent' | 'review';
+    action: string;
+  }>;
+};
+
+const emptyDashboard: DashboardPayload = {
+  metrics: {
+    patientsToday: 0,
+    pendingTests: 0,
+    releasedResults: 0,
+    revenueToday: 0,
+  },
+  patientFlow: [],
+  serviceBreakdown: [],
+  revenueTrend: [],
+  recentPatients: [],
+  liveQueue: [],
+  pendingValidations: [],
+};
+
+const serviceColors = ['#0b65b1', '#1f9d8b', '#f59e0b'];
 
 export default function DashboardPage() {
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardPayload>(emptyDashboard);
+  const [isLoading, setIsLoading] = useState(true);
+  const [pageError, setPageError] = useState('');
 
   useEffect(() => {
     let isMounted = true;
 
-    const syncQueue = async () => {
+    const loadDashboard = async () => {
       try {
-        const nextQueue = await fetchQueueEntries();
-        if (isMounted) {
-          setQueue(nextQueue);
+        const response = await fetch('/api/staff/dashboard', {
+          cache: 'no-store',
+        });
+        const payload = (await response.json()) as DashboardPayload & { error?: string };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Unable to load dashboard analytics.');
         }
-      } catch {
+
+        if (!isMounted) {
+          return;
+        }
+
+        setDashboard(payload);
+        setPageError('');
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setDashboard(emptyDashboard);
+        setPageError(
+          error instanceof Error ? error.message : 'Unable to load dashboard analytics.'
+        );
+      } finally {
         if (isMounted) {
-          setQueue([]);
+          setIsLoading(false);
         }
       }
     };
 
-    void syncQueue();
+    void loadDashboard();
     const poll = window.setInterval(() => {
-      void syncQueue();
-    }, 5000);
+      void loadDashboard();
+    }, 15000);
 
     return () => {
       isMounted = false;
@@ -58,250 +135,389 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const liveQueue = useMemo(
-    () =>
-      queue
-        .filter((item) => item.status !== 'completed')
-        .slice(0, 3),
-    [queue]
-  );
-
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Welcome back, Dr. Richardson</p>
+            <p className="mt-1 text-muted-foreground">
+              Live clinic analytics from the database, including queue, billing, and result activity.
+            </p>
           </div>
-          <Button className="h-11 px-6">+ New Lab Order</Button>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild variant="outline" className="gap-2">
+              <Link href="/staff/patient-registration">
+                <UserPlus className="h-4 w-4" />
+                Register Patient
+              </Link>
+            </Button>
+            <Button asChild className="gap-2">
+              <Link href="/staff/queue">
+                <FlaskConical className="h-4 w-4" />
+                Open Queue
+              </Link>
+            </Button>
+          </div>
         </div>
 
-        {/* Metrics Grid */}
-        <div className="grid grid-cols-4 gap-4 mb-8">
+        {pageError && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {pageError}
+          </div>
+        )}
+
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             label="PATIENTS TODAY"
-            value={mockDashboardMetrics.patientsToday.value}
-            change={mockDashboardMetrics.patientsToday.change}
-            icon={<Users className="w-5 h-5 text-primary" />}
+            value={dashboard.metrics.patientsToday}
+            icon={<Users className="h-5 w-5 text-primary" />}
           />
           <MetricCard
             label="PENDING TESTS"
-            value={mockDashboardMetrics.pendingTests.value}
-            critical={mockDashboardMetrics.pendingTests.critical}
-            icon={<AlertTriangle className="w-5 h-5 text-destructive" />}
+            value={dashboard.metrics.pendingTests}
+            critical={dashboard.metrics.pendingTests > 0}
+            icon={<AlertTriangle className="h-5 w-5 text-destructive" />}
           />
           <MetricCard
             label="RELEASED RESULTS"
-            value={mockDashboardMetrics.releasedResults.value}
-            change={mockDashboardMetrics.releasedResults.change}
-            icon={<CheckCircle2 className="w-5 h-5 text-accent" />}
+            value={dashboard.metrics.releasedResults}
+            icon={<CheckCircle2 className="h-5 w-5 text-accent" />}
           />
           <MetricCard
             label="REVENUE TODAY"
-            value={formatCurrency(mockDashboardMetrics.revenueToday.value)}
-            change={mockDashboardMetrics.revenueToday.change}
-            icon={<DollarSign className="w-5 h-5 text-primary" />}
+            value={formatCurrency(dashboard.metrics.revenueToday)}
+            icon={<DollarSign className="h-5 w-5 text-primary" />}
           />
         </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-4 gap-4 mb-8">
-          <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                <Users className="w-5 h-5 text-primary" />
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Link href="/staff/patient-registration">
+            <Card className="p-5 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-primary/10 p-3 text-primary">
+                  <UserPlus className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Front Desk</p>
+                  <p className="text-sm font-semibold">Patient Registration</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Register Patient</p>
-                <p className="text-sm font-semibold">New walk-in profile</p>
+            </Card>
+          </Link>
+
+          <Link href="/staff/queue">
+            <Card className="p-5 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-accent/10 p-3 text-accent">
+                  <FlaskConical className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Operations</p>
+                  <p className="text-sm font-semibold">Queue Management</p>
+                </div>
               </div>
-            </div>
-          </Card>
-          <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-accent" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                </svg>
+            </Card>
+          </Link>
+
+          <Link href="/staff/cashier">
+            <Card className="p-5 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
+                  <CreditCard className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Billing</p>
+                  <p className="text-sm font-semibold">Cashier / Front Desk</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">New Transaction</p>
-                <p className="text-sm font-semibold">Create billing entry</p>
+            </Card>
+          </Link>
+
+          <Link href="/staff/result-release">
+            <Card className="p-5 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-purple-100 p-3 text-purple-700">
+                  <FileBarChart2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Results</p>
+                  <p className="text-sm font-semibold">Release Workspace</p>
+                </div>
               </div>
-            </div>
-          </Card>
-          <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M19 12h-2v-2h-2v2h-2v2h2v2h2v-2h2v-2z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Scan QR</p>
-                <p className="text-sm font-semibold">Verify lab request</p>
-              </div>
-            </div>
-          </Card>
-          <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">View Statistics</p>
-                <p className="text-sm font-semibold">Performance report</p>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          </Link>
         </div>
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-3 gap-8">
-          {/* Left Column */}
-          <div className="col-span-2 space-y-8">
-            {/* Recent Patients */}
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-bold">Recent Patients</h2>
-                <Button variant="ghost" size="sm" className="text-primary">
-                  View all
+        <div className="grid gap-8 xl:grid-cols-3">
+          <div className="space-y-8 xl:col-span-2">
+            <div className="grid gap-8 lg:grid-cols-2">
+              <Card className="p-6 shadow-sm">
+                <div className="mb-5">
+                  <h2 className="text-lg font-bold">Patient Flow Today</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Two-hour intake pattern across the current clinic day.
+                  </p>
+                </div>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={dashboard.patientFlow}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="time" stroke="#64748b" />
+                    <YAxis stroke="#64748b" allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 12,
+                      }}
+                    />
+                    <Bar dataKey="count" fill="#0b65b1" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
+
+              <Card className="p-6 shadow-sm">
+                <div className="mb-5">
+                  <h2 className="text-lg font-bold">Service Mix Today</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Distribution of today&apos;s visits by service type.
+                  </p>
+                </div>
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie
+                      data={dashboard.serviceBreakdown}
+                      dataKey="count"
+                      nameKey="service"
+                      innerRadius={50}
+                      outerRadius={82}
+                      paddingAngle={3}
+                    >
+                      {dashboard.serviceBreakdown.map((entry, index) => (
+                        <Cell key={entry.service} fill={serviceColors[index % serviceColors.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 12,
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="mt-4 flex flex-wrap gap-4">
+                  {dashboard.serviceBreakdown.map((entry, index) => (
+                    <div key={entry.service} className="flex items-center gap-2 text-sm">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: serviceColors[index % serviceColors.length] }}
+                      />
+                      <span className="text-muted-foreground">
+                        {entry.service}: <span className="font-semibold text-foreground">{entry.count}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+
+            <Card className="p-6 shadow-sm">
+              <div className="mb-5">
+                <h2 className="text-lg font-bold">Revenue Trend</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Last 7 days of recorded payments from the database.
+                </p>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={dashboard.revenueTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="label" stroke="#64748b" />
+                  <YAxis
+                    stroke="#64748b"
+                    tickFormatter={(value) => `₱${Number(value).toLocaleString('en-PH')}`}
+                  />
+                  <Tooltip
+                    formatter={(value) => formatCurrency(Number(value))}
+                    contentStyle={{
+                      backgroundColor: '#fff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="amount"
+                    stroke="#0b65b1"
+                    strokeWidth={3}
+                    dot={{ r: 4, fill: '#0b65b1' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+
+            <Card className="p-6 shadow-sm">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold">Recent Patients</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Latest visit activity recorded in the database.
+                  </p>
+                </div>
+                <Button asChild variant="ghost" size="sm" className="text-primary">
+                  <Link href="/staff/patient-records">View all</Link>
                 </Button>
               </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-3 font-semibold text-muted-foreground">PATIENT NAME</th>
-                      <th className="text-left py-3 font-semibold text-muted-foreground">REQUEST TIME</th>
-                      <th className="text-left py-3 font-semibold text-muted-foreground">STATUS</th>
-                      <th className="text-left py-3 font-semibold text-muted-foreground">ACTION</th>
+                      <th className="py-3 text-left font-semibold text-muted-foreground">PATIENT</th>
+                      <th className="py-3 text-left font-semibold text-muted-foreground">QUEUE</th>
+                      <th className="py-3 text-left font-semibold text-muted-foreground">TIME</th>
+                      <th className="py-3 text-left font-semibold text-muted-foreground">STATUS</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {mockRecentPatients.map((patient, idx) => (
-                      <tr key={idx} className="border-b border-border hover:bg-muted/50">
-                        <td className="py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center text-xs font-bold">
-                              {patient.initials}
-                            </div>
+                    {dashboard.recentPatients.length > 0 ? (
+                      dashboard.recentPatients.map((patient) => (
+                        <tr
+                          key={`${patient.id}-${patient.queueNumber}`}
+                          className="border-b border-border hover:bg-muted/40"
+                        >
+                          <td className="py-4">
                             <div>
                               <p className="font-medium">{patient.name}</p>
                               <p className="text-xs text-muted-foreground">ID: {patient.id}</p>
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-4 text-muted-foreground">{patient.requestTime}</td>
-                        <td className="py-4">
-                          <StatusBadge status={patient.status} />
-                        </td>
-                        <td className="py-4">
-                          <button className="text-primary hover:underline">
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          </td>
+                          <td className="py-4 font-medium">{patient.queueNumber}</td>
+                          <td className="py-4 text-muted-foreground">{patient.requestTime}</td>
+                          <td className="py-4">
+                            <StatusBadge status={patient.status} />
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                          {isLoading
+                            ? 'Loading recent patients...'
+                            : 'No recent patient activity yet.'}
                         </td>
                       </tr>
-                    ))}
+                    )}
                   </tbody>
                 </table>
               </div>
             </Card>
-
-            {/* Patient Flow Chart */}
-            <Card className="p-6">
-              <h2 className="text-lg font-bold mb-6">Patient Flow</h2>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={patientFlowData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="time" stroke="#888" />
-                  <YAxis stroke="#888" />
-                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e0e0e0' }} />
-                  <Bar dataKey="count" fill="#2563eb" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
           </div>
 
-          {/* Right Column */}
           <div className="space-y-8">
-            {/* Live Queue */}
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-6">
+            <Card className="p-6 shadow-sm">
+              <div className="mb-6 flex items-center gap-2">
                 <h2 className="text-lg font-bold">Live Queue</h2>
-                <span className="inline-block w-2 h-2 bg-destructive rounded-full animate-pulse"></span>
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-destructive" />
                 <span className="text-xs font-bold text-destructive">LIVE</span>
               </div>
+
               <div className="space-y-3">
-                {liveQueue.length > 0 ? (
-                  liveQueue.map((item, idx) => (
-                    <div key={item.id} className="flex items-center gap-4 p-3 bg-muted/50 rounded-lg">
-                      <div className="w-8 h-8 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">
-                        {idx + 1}
+                {dashboard.liveQueue.length > 0 ? (
+                  dashboard.liveQueue.map((item, index) => (
+                    <div key={item.id} className="flex items-center gap-4 rounded-xl bg-muted/40 p-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                        {index + 1}
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-semibold">{item.queueNumber}</p>
                         <p className="text-xs text-muted-foreground">
-                          {item.currentLane} • {item.serviceType}
+                          {item.currentLane} | {item.serviceType}
                         </p>
                       </div>
                     </div>
                   ))
                 ) : (
                   <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                    No active queue yet.
+                    {isLoading ? 'Loading live queue...' : 'No active queue yet.'}
                   </div>
                 )}
               </div>
-              <Button asChild variant="outline" className="w-full mt-4">
-                <Link href="/staff/queue">
-                Manage Full Queue
-                </Link>
+
+              <Button asChild variant="outline" className="mt-4 w-full">
+                <Link href="/staff/queue">Manage Full Queue</Link>
               </Button>
             </Card>
 
-            {/* Pending Validations */}
-            <Card className="p-6">
-              <h2 className="text-lg font-bold mb-6">Pending Validations</h2>
+            <Card className="p-6 shadow-sm">
+              <h2 className="mb-6 text-lg font-bold">Pending Validations</h2>
               <div className="space-y-3">
-                {mockPendingValidations.map((item, idx) => (
-                  <div key={idx} className={`p-4 rounded-lg border-l-4 ${item.priority === 'urgent' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'}`}>
-                    <div className="flex items-start justify-between mb-2">
-                      <p className={`text-sm font-semibold ${item.priority === 'urgent' ? 'text-red-700' : 'text-amber-700'}`}>
-                        {item.testName}
-                      </p>
-                      <span className={`text-xs font-bold px-2 py-1 rounded ${item.priority === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {item.priority.toUpperCase()}
-                      </span>
+                {dashboard.pendingValidations.length > 0 ? (
+                  dashboard.pendingValidations.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`rounded-lg border-l-4 p-4 ${
+                        item.priority === 'urgent'
+                          ? 'border-orange-300 bg-orange-50'
+                          : 'border-amber-300 bg-amber-50'
+                      }`}
+                    >
+                      <div className="mb-2 flex items-start justify-between">
+                        <p
+                          className={`text-sm font-semibold ${
+                            item.priority === 'urgent' ? 'text-orange-700' : 'text-amber-700'
+                          }`}
+                        >
+                          {item.testName}
+                        </p>
+                        <span
+                          className={`rounded px-2 py-1 text-xs font-bold ${
+                            item.priority === 'urgent'
+                              ? 'bg-orange-100 text-orange-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {item.priority.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="mb-3 text-xs text-muted-foreground">Patient: {item.patient}</p>
+                      <Button asChild size="sm" className="w-full">
+                        <Link href="/staff/result-release">{item.action}</Link>
+                      </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground mb-3">Patient: {item.patient}</p>
-                    <Button size="sm" className="w-full">
-                      {item.action}
-                    </Button>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                    {isLoading ? 'Loading validations...' : 'No pending validations right now.'}
                   </div>
-                ))}
+                )}
               </div>
             </Card>
 
-            {/* Performance */}
-            <Card className="bg-gradient-to-br from-primary to-blue-700 text-primary-foreground p-6 rounded-lg">
-              <p className="text-xs font-bold opacity-80 mb-2">MY PERFORMANCE</p>
-              <h3 className="text-2xl font-bold mb-4">You&apos;re in the Top 5%</h3>
-              <div className="space-y-3 mb-6">
+            <Card className="rounded-lg bg-gradient-to-br from-primary to-blue-700 p-6 text-primary-foreground shadow-sm">
+              <p className="mb-2 text-xs font-bold opacity-80">CLINIC SNAPSHOT</p>
+              <h3 className="mb-4 text-2xl font-bold">Today at a Glance</h3>
+              <div className="space-y-3">
                 <div>
-                  <p className="text-3xl font-bold">42</p>
-                  <p className="text-sm opacity-90">results released</p>
+                  <p className="text-3xl font-bold">{dashboard.metrics.patientsToday}</p>
+                  <p className="text-sm opacity-90">visits recorded today</p>
                 </div>
                 <div>
-                  <p className="text-sm opacity-90">Today&apos;s clinical accuracy: <strong>99.8%</strong></p>
+                  <p className="text-sm opacity-90">
+                    Released results: <strong>{dashboard.metrics.releasedResults}</strong>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm opacity-90">
+                    Revenue today: <strong>{formatCurrency(dashboard.metrics.revenueToday)}</strong>
+                  </p>
                 </div>
               </div>
-              <Button variant="outline" className="w-full bg-primary-foreground text-primary hover:bg-primary-foreground/90">
-                View Statistics
+              <Button asChild variant="outline" className="mt-6 w-full bg-primary-foreground text-primary hover:bg-primary-foreground/90">
+                <Link href="/staff/patient-records">
+                  <Eye className="mr-2 h-4 w-4" />
+                  View Patient Records
+                </Link>
               </Button>
             </Card>
           </div>

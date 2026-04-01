@@ -47,6 +47,12 @@ type VisitRow = {
   updated_at: string;
 };
 
+type LabOrderRow = {
+  id: string;
+  visit_id: string;
+  order_number: string;
+};
+
 type QueueEntryRow = {
   id: string;
   visit_id: string;
@@ -251,6 +257,7 @@ export async function GET() {
       queueStepsResponse,
       invoicesResponse,
       machineImportsResponse,
+      labOrdersResponse,
     ] = await Promise.all([
       supabase
         .from('queue_entries')
@@ -270,6 +277,11 @@ export async function GET() {
         .select('id, visit_id, lane, source_order_id, source_sample_id, raw_content, parsed_payload, created_at')
         .in('visit_id', visitIds)
         .order('created_at', { ascending: false }),
+      supabase
+        .from('lab_orders')
+        .select('id, visit_id, order_number')
+        .in('visit_id', visitIds)
+        .order('created_at', { ascending: true }),
     ]);
 
     if (queueEntriesResponse.error) {
@@ -284,11 +296,15 @@ export async function GET() {
     if (machineImportsResponse.error) {
       throw new Error(machineImportsResponse.error.message);
     }
+    if (labOrdersResponse.error) {
+      throw new Error(labOrdersResponse.error.message);
+    }
 
     const queueEntries = (queueEntriesResponse.data ?? []) as QueueEntryRow[];
     const queueSteps = (queueStepsResponse.data ?? []) as QueueStepRow[];
     const invoices = (invoicesResponse.data ?? []) as InvoiceRow[];
     const machineImports = (machineImportsResponse.data ?? []) as MachineImportRow[];
+    const labOrders = (labOrdersResponse.data ?? []) as LabOrderRow[];
 
     const invoiceIds = invoices.map((invoice) => invoice.id);
     const machineImportIds = machineImports.map((machineImport) => machineImport.id);
@@ -337,6 +353,7 @@ export async function GET() {
     const invoiceItemsByInvoiceId = new Map<string, InvoiceItemRow[]>();
     const paymentByInvoiceId = new Map<string, PaymentRow>();
     const importsByVisitId = new Map<string, MachineImportRow[]>();
+    const labNumbersByVisitId = new Map<string, string[]>();
     const resultsByImportId = new Map<string, ResultItemRow[]>();
 
     for (const step of queueSteps) {
@@ -363,6 +380,12 @@ export async function GET() {
       importsByVisitId.set(machineImport.visit_id, visitImports);
     }
 
+    for (const labOrder of labOrders) {
+      const visitLabNumbers = labNumbersByVisitId.get(labOrder.visit_id) ?? [];
+      visitLabNumbers.push(labOrder.order_number);
+      labNumbersByVisitId.set(labOrder.visit_id, visitLabNumbers);
+    }
+
     for (const resultItem of resultItems) {
       if (!resultItem.machine_import_id) {
         continue;
@@ -378,6 +401,7 @@ export async function GET() {
         .filter((visit) => visit.patient_id === patient.id)
         .map((visit): VisitRecord => {
           const queueEntry = queueByVisitId.get(visit.id);
+          const labNumbers = labNumbersByVisitId.get(visit.id) ?? [];
           const visitSteps = [...(stepsByVisitId.get(visit.id) ?? [])].sort(
             (left, right) => left.sort_order - right.sort_order
           );
@@ -443,6 +467,7 @@ export async function GET() {
             id: visit.id,
             queueEntryId: queueEntry?.id ?? '',
             queueNumber: queueEntry?.queue_number ?? 'Unassigned',
+            labNumbers,
             patientName: [patient.first_name, patient.middle_name ?? '', patient.last_name]
               .filter(Boolean)
               .join(' '),

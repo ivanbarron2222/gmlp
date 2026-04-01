@@ -26,6 +26,7 @@ export interface VisitRecord {
   id: string;
   queueEntryId: string;
   queueNumber: string;
+  labNumbers: string[];
   patientName: string;
   serviceType: VisitServiceType;
   requestedLabService: string;

@@ -34,14 +34,15 @@ Use this skill when working on:
 - `/queue-display`: second-monitor public queue display
 - `/report/[queueId]`: public soft-copy report page for released results
 - `/scan/queue/[id]`: QR scan resolver for active visit/queue context
-- `/staff/patient-registration`: staff-side registration and verification
+- `/staff/patient-registration`: front desk registration and verification
 - `/staff/queue`: staff queue management
 - `/staff/lab-orders`: lab order management and machine upload
 - `/staff/result-encoding`: doctor consultation / referral workflow
-- `/staff/cashier`: cashier and billing
+- `/staff/cashier`: cashier, front desk billing, and queue slip printing
 - `/staff/patient-records`: patient history and management
 - `/staff/result-release`: result validation, release, PDF, and review flow
 - `/staff/settings`: admin-only settings page
+- `/dashboard`: DB-backed analytics dashboard
 
 ## Roles
 
@@ -66,14 +67,16 @@ Frontend station-role mappings use:
 Role behavior:
 - `admin` can see all modules and the full queue board
 - `nurse` handles intake, verification, queueing, and full-board operational view
-- `blood-test`, `drug-test`, `doctor`, and `xray` only see their assigned queue/process screens
-- `cashier` focuses on billing and patient records
+- `cashier` now behaves as `cashier / front desk`, with access to registration, queue, billing, patient records, and result release
+- `blood-test`, `drug-test`, `doctor`, and `xray` see their assigned workflow screens
+- cashier/front desk now prints the queue slip
 
 ## Queue Rules
 
 - Patients self-register first through `/register`
 - Staff verifies the patient before adding them to the queue
 - Queue numbers are assigned by staff, not directly by the self-registration page
+- Queue numbers reset daily in Manila time; permanent records do not reset
 - Public display should prefer queue numbers only and avoid showing patient names
 - `GENERAL` is the intake queue
 - `PRIORITY LANE` is handled before regular `GENERAL` entries when departments accept the next patient
@@ -82,7 +85,8 @@ Role behavior:
 - `Check-Up` patients go to `DOCTOR` first; `BLOOD TEST`, `DRUG TEST`, and `XRAY` are optional referrals added after doctor review
 - `Lab` goes directly to the selected lab lane
 - `/staff/queue` is the control page for intake, department acceptance, and step completion
-- Queue is now DB-backed, not localStorage-driven
+- Queue is DB-backed, not localStorage-driven
+- Internal staff flow no longer depends on a printed patient QR; queue and station screens use direct visit/workflow links
 
 ## Registration Notes
 
@@ -93,7 +97,9 @@ Role behavior:
 - After successful submission, `/register` shows a thank-you screen with `Registration Complete`
 - Do not re-add the removed `Continue to Login` action block unless the user asks
 - `/register` submits to Supabase `self_registrations` through the anon client
-- `/staff/patient-registration` now reads real pending registrations from Supabase and prints a queue slip with QR after verification
+- `/staff/patient-registration` reads real pending registrations from Supabase
+- The patient-registration page no longer has the old pre-registration check card; keep it focused on pending registrations, workspace summary, and verification
+- After verification, the page shows a compact queued-patient summary instead of printing a slip there
 
 ## Login Notes
 
@@ -117,6 +123,8 @@ Replace or avoid old branding such as:
 ## UI Preferences
 
 - Prefer elegant, clean layouts
+- Use subtle shadows on cards to create hierarchy, but avoid heavy decorative UI
+- For non-technical users, prefer one clear primary action per section and minimal extra explanatory text
 - `/staff/patient-registration` uses a modal for the full verification form instead of keeping the form permanently open on the page
 - `/queue-display` should stay light / white and optimized for TV / big-screen viewing
 - `/queue-display` should try to fit within one screen without overflow
@@ -138,6 +146,7 @@ Replace or avoid old branding such as:
 - Primary schema: `supabase/migrations/20260330_001_init_gmlp_schema.sql`
 - Report review-note migration: `supabase/migrations/20260401_001_report_review_notes.sql`
 - Admin settings migration: `supabase/migrations/20260401_002_admin_settings.sql`
+- Lab-number backfill migration: `supabase/migrations/20260402_001_backfill_lab_numbers.sql`
 - Staff profile seed template: `supabase/seeds/20260331_staff_profiles_template.sql`
 - Environment variables expected by the app:
   - `NEXT_PUBLIC_SUPABASE_URL`
@@ -164,6 +173,7 @@ These are DB-backed now:
 - `/staff/patient-records` -> real Supabase-backed patient history
 - `/staff/result-release` -> `reports` validate / release / review state
 - public `/report/[queueId]` soft copy access based on release status
+- `/dashboard` -> real Supabase-backed analytics API
 
 ## Machine Result Notes
 
@@ -175,6 +185,7 @@ These are DB-backed now:
 - CBC and Urinalysis are separated into distinct report sections even though they currently pass through the same `BLOOD TEST` station
 - Drug-test ASTM-like parsing now supports `NEG` / `POS` and maps them into `result_items` with proper flags
 - Lab order numbers now use `LAB-###`
+- Cashier and patient-records views now surface lab numbers from `lab_orders.order_number`
 
 ## Result Release Notes
 
@@ -202,12 +213,27 @@ These are DB-backed now:
 - Cashier now reads service pricing from `service_catalog` through `/api/staff/service-catalog`
 - Partner companies are stored, but patient registration still uses free-text company input for now
 
+## Dashboard Notes
+
+- `/dashboard` is now DB-backed and should not use mock dashboard metrics
+- Keep analytics at the top of the dashboard before recent-patient detail tables
+- Current analytics blocks:
+  - top KPI cards
+  - patient flow chart
+  - service mix chart
+  - revenue trend chart
+  - recent patients table
+  - live queue panel
+  - pending validations panel
+- Prefer readable summaries over dense BI-style dashboards
+
 ## Deployment Notes
 
 - App is prepared for Vercel
 - QR generation should use `NEXT_PUBLIC_APP_URL`
-- Printed queue slip QR should point to `/scan/queue/[id]`
 - Printed lab-result QR should point to `/report/[queueId]`
+- Internal patient queue-slip QR is no longer part of the staff flow
+- Queue slip printing now starts from cashier/front desk
 - `pnpm` is the package manager in current project setup
 
 ## Working Rules

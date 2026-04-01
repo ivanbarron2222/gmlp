@@ -3,12 +3,12 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ClipboardPlus, QrCode, Stethoscope } from 'lucide-react';
+import { ClipboardPlus, Stethoscope } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchQueueEntry, postQueueAction } from '@/lib/queue-api';
-import { getQueueScanPath, QueueEntry } from '@/lib/queue-store';
+import { getQueueVisitPath, QueueEntry } from '@/lib/queue-store';
 
 function ResultEncodingPageContent() {
   const searchParams = useSearchParams();
@@ -99,11 +99,11 @@ function ResultEncodingPageContent() {
             </p>
             <h1 className="mt-2 text-3xl font-bold">Consultation Workflow</h1>
             <p className="mt-2 text-muted-foreground">
-              Manage check-up and pre-employment doctor steps from the scanned patient slip.
+              Manage check-up and pre-employment doctor steps directly from the selected queue visit.
             </p>
           </div>
           <Button asChild variant="outline">
-            <Link href={getQueueScanPath(entry.id)}>Open QR Context</Link>
+            <Link href={getQueueVisitPath(entry.id)}>View Patient Visit</Link>
           </Button>
         </div>
 
@@ -119,7 +119,7 @@ function ResultEncodingPageContent() {
                 </p>
               </div>
               <div className="rounded-full bg-primary/10 p-3 text-primary">
-                <QrCode className="h-7 w-7" />
+                <Stethoscope className="h-7 w-7" />
               </div>
             </div>
 

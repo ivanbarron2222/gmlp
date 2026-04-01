@@ -100,6 +100,25 @@ async function getQueueContext(queueId: string) {
   };
 }
 
+async function getLabNumbers(
+  visitId: string,
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+) {
+  const { data, error } = await supabase
+    .from('lab_orders')
+    .select('order_number')
+    .eq('visit_id', visitId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? [])
+    .map((row) => String(row.order_number ?? '').trim())
+    .filter(Boolean);
+}
+
 async function getBillingRecord(
   visitId: string,
   supabase: ReturnType<typeof getSupabaseAdminClient>
@@ -167,6 +186,7 @@ export async function GET(request: Request) {
     const { supabase, queue } = await getQueueContext(queueId);
     const patient = toPatient(queue);
     const existingBilling = await getBillingRecord(queue.visit_id, supabase);
+    const labNumbers = await getLabNumbers(queue.visit_id, supabase);
     const completedLanes = [...(queue.queue_steps ?? [])]
       .filter((step) => step.status === 'completed')
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -176,6 +196,7 @@ export async function GET(request: Request) {
       patient,
       visit: {
         queueNumber: queue.queue_number,
+        labNumbers,
         patientName: patient.name,
         serviceType: dbServiceToUiService(queue.service_type),
         requestedLabService:

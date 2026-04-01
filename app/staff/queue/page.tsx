@@ -2,19 +2,70 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, MonitorPlay } from 'lucide-react';
+import { Activity, Clock3, ExternalLink, MonitorPlay, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchQueueEntries, postQueueAction } from '@/lib/queue-api';
 import {
   QueueEntry,
   QueueLane,
-  getQueueScanPath,
   getLaneLabel,
+  getQueueVisitPath,
+  getQueueWorkflowPath,
   serviceLanes,
 } from '@/lib/queue-store';
 import { getRoleLabel, getRoleLane, readStationRole, type StationRole } from '@/lib/station-role';
+
+function QueueMeta({ item }: { item: QueueEntry }) {
+  return (
+    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+      {item.serviceType}
+      {item.pendingLanes.length > 0
+        ? ` | Remaining: ${item.pendingLanes.join(' -> ')}`
+        : ' | No remaining steps'}
+    </p>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  icon,
+  emphasized = false,
+}: {
+  label: string;
+  value: string | number;
+  icon: React.ReactNode;
+  emphasized?: boolean;
+}) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        {icon}
+      </div>
+      <p className={`mt-3 text-4xl font-black ${emphasized ? 'text-primary' : ''}`}>{value}</p>
+    </Card>
+  );
+}
+
+function getEntryActionPath(entry: QueueEntry, lane?: QueueLane | null) {
+  if (lane && lane !== 'GENERAL') {
+    return getQueueWorkflowPath(entry.id, lane);
+  }
+
+  return getQueueVisitPath(entry.id);
+}
+
+function getEntryActionLabel(lane?: QueueLane | null) {
+  if (lane && lane !== 'GENERAL') {
+    return 'Open Active Visit';
+  }
+
+  return 'Open Patient Visit';
+}
 
 export default function QueueManagementPage() {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
@@ -65,12 +116,25 @@ export default function QueueManagementPage() {
   );
 
   const completedQueue = useMemo(
-    () => queue.filter((item) => item.status === 'completed').slice(-6).reverse(),
+    () => queue.filter((item) => item.status === 'completed').slice(-10).reverse(),
+    [queue]
+  );
+
+  const servingCount = useMemo(
+    () => queue.filter((item) => item.status === 'serving').length,
+    [queue]
+  );
+  const waitingCount = useMemo(
+    () => queue.filter((item) => item.status === 'waiting').length,
     [queue]
   );
 
   const roleLane = stationRole ? getRoleLane(stationRole) : null;
-  const hasFullQueueAccess = !stationRole || stationRole === 'nurse' || stationRole === 'admin';
+  const hasFullQueueAccess =
+    !stationRole ||
+    stationRole === 'nurse' ||
+    stationRole === 'cashier' ||
+    stationRole === 'admin';
   const visibleServiceLanes = roleLane ? serviceLanes.filter((lane) => lane === roleLane) : serviceLanes;
 
   const getLaneWaiting = (lane: QueueLane) =>
@@ -119,12 +183,12 @@ export default function QueueManagementPage() {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-              {getRoleLabel(stationRole!)}
+                {getRoleLabel(stationRole!)}
               </p>
               <h1 className="mt-2 text-4xl font-bold tracking-tight">{lane} Queue</h1>
               <p className="mt-3 max-w-3xl text-muted-foreground">
-                Monitor the active patient, call the next queue number, and keep this station moving
-                without the full clinic board.
+                Keep this station focused on active work. The serving patient stays prominent, and
+                the waiting queue stays inside a scrollable panel.
               </p>
             </div>
             <Button asChild variant="outline" className="gap-2">
@@ -135,120 +199,114 @@ export default function QueueManagementPage() {
             </Button>
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-3">
-                <Card className="p-5">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <SummaryCard
+              label="Now Serving"
+              value={serving.length}
+              icon={<Activity className="h-4 w-4 text-primary" />}
+              emphasized
+            />
+            <SummaryCard
+              label="Waiting"
+              value={waiting.length}
+              icon={<Clock3 className="h-4 w-4 text-muted-foreground" />}
+            />
+            <SummaryCard
+              label="Next Queue"
+              value={nextUp?.queueNumber ?? 'None'}
+              icon={<Users className="h-4 w-4 text-muted-foreground" />}
+            />
+          </div>
+
+          <div className="mt-6 grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+            <Card className="p-6">
+              <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Now Serving
+                    Station Controls
                   </p>
-                  <p className="mt-3 text-4xl font-black text-primary">{serving.length}</p>
-                </Card>
-                <Card className="p-5">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Waiting
+                  <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Accept the next patient, call the queue, and finish the current station step from this panel.
                   </p>
-                  <p className="mt-3 text-4xl font-black">{waiting.length}</p>
-                </Card>
-                <Card className="p-5">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Next Queue
-                  </p>
-                  <p className="mt-3 text-3xl font-black">{nextUp?.queueNumber ?? 'None'}</p>
-                </Card>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button variant="outline" onClick={() => void handleAcceptNext(lane)}>
+                    Accept Next
+                  </Button>
+                  <Button onClick={() => void handleCallNext(lane)}>Call Next</Button>
+                </div>
               </div>
 
-              <Card className="p-6">
-                <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Station Controls
-                    </p>
-                    <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => void handleAcceptNext(lane)}
-                    >
-                      Accept Next
-                    </Button>
-                    <Button onClick={() => void handleCallNext(lane)}>
-                      Call Next
-                    </Button>
-                  </div>
-                </div>
+              <div className="space-y-4">
+                {serving.length > 0 ? (
+                  serving.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
+                      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+                            Now Serving
+                          </p>
+                          <p className="mt-3 text-5xl font-black tracking-tight text-primary">
+                            {item.queueNumber}
+                          </p>
+                          <p className="mt-3 text-xl font-semibold">{item.patientName}</p>
+                          <QueueMeta item={item} />
+                          <Link
+                            href={getEntryActionPath(item, lane)}
+                            className="mt-4 inline-block text-sm font-semibold text-primary hover:underline"
+                          >
+                            {getEntryActionLabel(lane)}
+                          </Link>
+                        </div>
 
-                <div className="space-y-4">
-                  {serving.length > 0 ? (
-                    serving.map((item) => (
-                      <div key={item.id} className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
-                        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
-                              Now Serving
-                            </p>
-                            <p className="mt-3 text-5xl font-black tracking-tight text-primary">
-                              {item.queueNumber}
-                            </p>
-                            <p className="mt-3 text-xl font-semibold">{item.patientName}</p>
-                            <p className="mt-2 text-sm text-muted-foreground">
-                              {item.serviceType} • Remaining: {item.pendingLanes.join(' → ') || 'None'}
-                            </p>
-                            <Link
-                              href={getQueueScanPath(item.id)}
-                              className="mt-4 inline-block text-sm font-semibold text-primary hover:underline"
-                            >
-                              Open QR Context
-                            </Link>
-                          </div>
+                        <div className="flex flex-wrap gap-2 lg:max-w-sm lg:justify-end">
+                          {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleAddReferral(item.id, 'BLOOD TEST')}
+                              >
+                                Add Blood Test
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleAddReferral(item.id, 'DRUG TEST')}
+                              >
+                                Add Drug Test
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleAddReferral(item.id, 'XRAY')}
+                              >
+                                Add Xray
+                              </Button>
+                            </>
+                          )}
 
-                          <div className="flex flex-wrap gap-2 lg:max-w-sm lg:justify-end">
-                            {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void handleAddReferral(item.id, 'BLOOD TEST')}
-                                >
-                                  Add Blood Test
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void handleAddReferral(item.id, 'DRUG TEST')}
-                                >
-                                  Add Drug Test
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void handleAddReferral(item.id, 'XRAY')}
-                                >
-                                  Add Xray
-                                </Button>
-                              </>
-                            )}
-
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void handleFinishStep(item.id)}
-                            >
-                              {item.pendingLanes.length > 1 ? 'Finish Step and Return to General' : 'Complete Queue'}
-                            </Button>
-                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleFinishStep(item.id)}
+                          >
+                            {item.pendingLanes.length > 1
+                              ? 'Finish Step and Return to General'
+                              : 'Complete Queue'}
+                          </Button>
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-border p-8 text-sm text-muted-foreground">
-                      No active patient is being served in {lane}.
                     </div>
-                  )}
-                </div>
-              </Card>
-            </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border p-8 text-sm text-muted-foreground">
+                    No active patient is being served in {lane}.
+                  </div>
+                )}
+              </div>
+            </Card>
 
             <Card className="p-6">
               <div className="mb-4 flex items-center justify-between">
@@ -257,42 +315,45 @@ export default function QueueManagementPage() {
                     Waiting Queue
                   </p>
                   <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    The waiting list stays scrollable as the queue grows.
+                  </p>
                 </div>
                 <div className="rounded-full bg-muted px-3 py-1 text-sm font-semibold">
                   {waiting.length} patients
                 </div>
               </div>
 
-              <div className="max-h-[42rem] space-y-3 overflow-y-auto pr-1">
-                {waiting.length > 0 ? (
-                  waiting.map((item, index) => (
-                    <div key={item.id} className="rounded-xl border border-border bg-muted/30 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-lg font-semibold">{item.queueNumber}</p>
-                          <p className="mt-1 font-medium">{item.patientName}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {item.serviceType} • Remaining: {item.pendingLanes.join(' → ')}
-                          </p>
+              <ScrollArea className="h-[42rem] pr-3">
+                <div className="space-y-3">
+                  {waiting.length > 0 ? (
+                    waiting.map((item, index) => (
+                      <div key={item.id} className="rounded-xl border border-border bg-muted/30 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-lg font-semibold">{item.queueNumber}</p>
+                            <p className="mt-1 font-medium">{item.patientName}</p>
+                            <QueueMeta item={item} />
+                          </div>
+                          <span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                            #{index + 1}
+                          </span>
                         </div>
-                        <span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-                          #{index + 1}
-                        </span>
+                        <Link
+                          href={getEntryActionPath(item, lane)}
+                          className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
+                        >
+                          {getEntryActionLabel(lane)}
+                        </Link>
                       </div>
-                      <Link
-                        href={getQueueScanPath(item.id)}
-                        className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
-                      >
-                        Open QR Context
-                      </Link>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                      No waiting patients in {lane}.
                     </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                    No waiting patients in {lane}.
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              </ScrollArea>
             </Card>
           </div>
         </div>
@@ -309,9 +370,9 @@ export default function QueueManagementPage() {
             <p className="mt-2 text-muted-foreground">
               {stationRole === 'admin'
                 ? 'Admin can monitor every lane, review queue movement, and oversee the full clinic workflow from one board.'
-                : hasFullQueueAccess
-                  ? 'Pre-employment must complete all required stations, but patients can start at any available lab. Check-up starts with the doctor, and optional labs can be added after the consultation.'
-                  : `${getRoleLabel(stationRole!)} only sees its assigned queue and currently serving patients.`}
+                : stationRole === 'cashier'
+                  ? 'Cashier / front desk can verify patients, start the live queue, and continue into billing from the same workspace.'
+                : 'Pre-employment must complete all required stations, but patients can start at any available lab. Check-up starts with the doctor, and optional labs can be added after the consultation.'}
             </p>
           </div>
           <Button asChild variant="outline" className="gap-2">
@@ -322,53 +383,52 @@ export default function QueueManagementPage() {
           </Button>
         </div>
 
-        <div className={hasFullQueueAccess ? 'grid gap-8 xl:grid-cols-[1.05fr_1.95fr]' : 'space-y-8'}>
-          {hasFullQueueAccess && (
-            <Card className="p-6">
-              <h2 className="mb-4 text-lg font-bold">
-                {stationRole === 'admin' ? 'Registration Oversight' : 'Nurse Intake'}
-              </h2>
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Queue entries are now read directly from the database. Create or verify patients
-                  from the nurse registration workflow so the live board stays in sync across all
-                  stations and displays.
-                </p>
+        <div className="space-y-8">
+            <div className="grid gap-4 lg:grid-cols-4">
+              <SummaryCard
+                label="Total Waiting"
+                value={waitingCount}
+                icon={<Clock3 className="h-4 w-4 text-muted-foreground" />}
+              />
+              <SummaryCard
+                label="Now Serving"
+                value={servingCount}
+                icon={<Activity className="h-4 w-4 text-primary" />}
+                emphasized
+              />
+              <SummaryCard
+                label="General Queue"
+                value={generalQueue.length}
+                icon={<Users className="h-4 w-4 text-muted-foreground" />}
+              />
+              <SummaryCard
+                label="Priority Lane"
+                value={priorityQueue.length}
+                icon={<Users className="h-4 w-4 text-red-600" />}
+              />
+            </div>
 
-                <div className="rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">
-                  <p className="mb-1 font-semibold text-foreground">Recommended workflow</p>
-                  <p>
-                    Use Patient Registration for walk-ins and self-registrations, then return here
-                    to accept, call, and monitor the database-backed queue.
-                  </p>
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              <Card className="p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-lg font-bold">PRIORITY LANE</h2>
+                  <span className="text-xs font-semibold text-red-600">{priorityQueue.length} waiting</span>
                 </div>
-
-                <Button asChild className="h-11 w-full">
-                  <Link href="/staff/patient-registration">Open Patient Registration</Link>
-                </Button>
-              </div>
-            </Card>
-          )}
-
-          <div className={hasFullQueueAccess ? 'space-y-8' : ''}>
-            {hasFullQueueAccess && (
-              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                <Card className="p-5">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-lg font-bold">PRIORITY LANE</h2>
-                    <span className="text-xs font-semibold text-red-600">{priorityQueue.length} waiting</span>
-                  </div>
-                  <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+                <ScrollArea className="h-[28rem] pr-3">
+                  <div className="space-y-3">
                     {priorityQueue.length > 0 ? (
                       priorityQueue.map((item) => (
                         <div key={item.id} className="rounded-xl border border-red-100 bg-red-50 p-4">
                           <p className="font-bold text-red-700">{item.queueNumber}</p>
                           <p className="font-medium">{item.patientName}</p>
                           <p className="text-xs text-muted-foreground">
-                            Next: {item.pendingLanes[0] ?? 'Done'} • {item.serviceType}
+                            Next: {item.pendingLanes[0] ?? 'Done'} | {item.serviceType}
                           </p>
-                          <Link href={getQueueScanPath(item.id)} className="mt-2 inline-block text-xs font-semibold text-primary hover:underline">
-                            Open QR Context
+                          <Link
+                            href={getEntryActionPath(item)}
+                            className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
+                          >
+                            Open Patient Visit
                           </Link>
                         </div>
                       ))
@@ -378,24 +438,29 @@ export default function QueueManagementPage() {
                       </div>
                     )}
                   </div>
-                </Card>
+                </ScrollArea>
+              </Card>
 
-                <Card className="p-5 md:col-span-1 xl:col-span-2">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-lg font-bold">GENERAL</h2>
-                    <span className="text-xs text-muted-foreground">{generalQueue.length} waiting</span>
-                  </div>
-                  <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+              <Card className="p-5 md:col-span-1 xl:col-span-2">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-lg font-bold">GENERAL</h2>
+                  <span className="text-xs text-muted-foreground">{generalQueue.length} waiting</span>
+                </div>
+                <ScrollArea className="h-[28rem] pr-3">
+                  <div className="space-y-3">
                     {generalQueue.length > 0 ? (
                       generalQueue.map((item) => (
                         <div key={item.id} className="flex items-center justify-between rounded-xl bg-muted/50 p-4">
                           <div>
-                            <p className="font-semibold">{item.queueNumber} • {item.patientName}</p>
+                            <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
                             <p className="text-sm text-muted-foreground">
-                              {item.serviceType} • Next: {item.pendingLanes[0] ?? 'Done'}
+                              {item.serviceType} | Next: {item.pendingLanes[0] ?? 'Done'}
                             </p>
-                            <Link href={getQueueScanPath(item.id)} className="mt-2 inline-block text-xs font-semibold text-primary hover:underline">
-                              Open QR Context
+                            <Link
+                              href={getEntryActionPath(item)}
+                              className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
+                            >
+                              Open Patient Visit
                             </Link>
                           </div>
                           <span className="text-xs font-semibold text-sky-700">{getLaneLabel(item)}</span>
@@ -407,194 +472,175 @@ export default function QueueManagementPage() {
                       </div>
                     )}
                   </div>
-                </Card>
-              </div>
-            )}
+                </ScrollArea>
+              </Card>
+            </div>
 
-            <div className={hasFullQueueAccess ? 'grid gap-6 md:grid-cols-2' : 'grid gap-6 xl:grid-cols-[1.15fr_0.85fr]'}>
+            <div className="grid gap-6 md:grid-cols-2">
               {visibleServiceLanes.map((lane) => {
                 const waiting = getLaneWaiting(lane);
                 const serving = getLaneServing(lane);
 
                 return (
-                  <div key={lane} className={hasFullQueueAccess ? '' : 'grid gap-6 xl:grid-cols-[1.1fr_0.9fr]'}>
-                    <Card className="p-6">
-                      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
-                            {lane} Station
-                          </p>
-                          <h2 className="mt-2 text-3xl font-bold">{lane}</h2>
-                          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                            Accepts patients from GENERAL. Priority patients for this lane are accepted first. Pre-employment patients may enter any unfinished station.
-                          </p>
-                        </div>
-                        <div className="grid min-w-40 grid-cols-2 gap-3">
-                          <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Serving</p>
-                            <p className="mt-2 text-3xl font-bold text-primary">{serving.length}</p>
-                          </div>
-                          <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Waiting</p>
-                            <p className="mt-2 text-3xl font-bold">{waiting.length}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:max-w-md">
-                        <Button
-                          variant="outline"
-                          onClick={() => void handleAcceptNext(lane)}
-                        >
-                          Accept Next
-                        </Button>
-                        <Button onClick={() => void handleCallNext(lane)}>
-                          Call Next
-                        </Button>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div>
-                          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Now Serving
-                          </p>
-                          <div className="space-y-3">
-                            {serving.length > 0 ? (
-                              serving.map((item) => (
-                                <div key={item.id} className="rounded-xl border border-primary/20 bg-primary/5 p-5">
-                                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                    <div>
-                                      <p className="text-3xl font-bold text-primary">{item.queueNumber}</p>
-                                      <p className="mt-1 text-lg font-medium">{item.patientName}</p>
-                                      <p className="mt-1 text-sm text-muted-foreground">
-                                        {item.serviceType} • Remaining: {item.pendingLanes.join(' → ') || 'None'}
-                                      </p>
-                                      <Link href={getQueueScanPath(item.id)} className="mt-3 inline-block text-xs font-semibold text-primary hover:underline">
-                                        Open QR Context
-                                      </Link>
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
-                                      {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
-                                        <>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => void handleAddReferral(item.id, 'BLOOD TEST')}
-                                          >
-                                            Add Blood Test
-                                          </Button>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => void handleAddReferral(item.id, 'DRUG TEST')}
-                                          >
-                                            Add Drug Test
-                                          </Button>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => void handleAddReferral(item.id, 'XRAY')}
-                                          >
-                                            Add Xray
-                                          </Button>
-                                        </>
-                                      )}
-
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => void handleFinishStep(item.id)}
-                                      >
-                                        {item.pendingLanes.length > 1 ? 'Finish Step and Return to General' : 'Complete Queue'}
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
-                                No active patient in {lane}.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {hasFullQueueAccess && (
-                          <div>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Waiting in {lane}
-                            </p>
-                            <div className="space-y-3">
-                              {waiting.length > 0 ? (
-                                waiting.map((item) => (
-                                  <div key={item.id} className="rounded-xl bg-muted/50 p-4">
-                                    <p className="font-semibold">{item.queueNumber} • {item.patientName}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {item.serviceType} • Remaining: {item.pendingLanes.join(' → ')}
-                                    </p>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                                  No waiting patients in {lane}.
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-
-                    {!hasFullQueueAccess && (
-                      <Card className="p-6">
-                        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Waiting in {lane}
+                  <Card key={lane} className="p-6">
+                    <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
+                          {lane} Station
                         </p>
-                        <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
-                          {waiting.length > 0 ? (
-                            waiting.map((item) => (
-                              <div key={item.id} className="rounded-xl bg-muted/50 p-4">
-                                <p className="text-lg font-semibold">{item.queueNumber}</p>
-                                <p className="mt-1 font-medium">{item.patientName}</p>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  {item.serviceType} • Remaining: {item.pendingLanes.join(' → ')}
-                                </p>
-                                <Link href={getQueueScanPath(item.id)} className="mt-2 inline-block text-xs font-semibold text-primary hover:underline">
-                                  Open QR Context
-                                </Link>
+                        <h2 className="mt-2 text-3xl font-bold">{lane}</h2>
+                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                          Accepts patients from GENERAL. Priority entries are accepted first. Long
+                          lists are scrollable so the board stays manageable.
+                        </p>
+                      </div>
+                      <div className="grid min-w-40 grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Serving
+                          </p>
+                          <p className="mt-2 text-3xl font-bold text-primary">{serving.length}</p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Waiting
+                          </p>
+                          <p className="mt-2 text-3xl font-bold">{waiting.length}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:max-w-md">
+                      <Button variant="outline" onClick={() => void handleAcceptNext(lane)}>
+                        Accept Next
+                      </Button>
+                      <Button onClick={() => void handleCallNext(lane)}>Call Next</Button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Now Serving
+                        </p>
+                        <div className="space-y-3">
+                          {serving.length > 0 ? (
+                            serving.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-primary/20 bg-primary/5 p-5">
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                  <div>
+                                    <p className="text-3xl font-bold text-primary">{item.queueNumber}</p>
+                                    <p className="mt-1 text-lg font-medium">{item.patientName}</p>
+                                    <QueueMeta item={item} />
+                                    <Link
+                                      href={getEntryActionPath(item, lane)}
+                                      className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
+                                    >
+                                      {getEntryActionLabel(lane)}
+                                    </Link>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
+                                    {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
+                                      <>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void handleAddReferral(item.id, 'BLOOD TEST')}
+                                        >
+                                          Add Blood Test
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void handleAddReferral(item.id, 'DRUG TEST')}
+                                        >
+                                          Add Drug Test
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void handleAddReferral(item.id, 'XRAY')}
+                                        >
+                                          Add Xray
+                                        </Button>
+                                      </>
+                                    )}
+
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => void handleFinishStep(item.id)}
+                                    >
+                                      {item.pendingLanes.length > 1
+                                        ? 'Finish Step and Return to General'
+                                        : 'Complete Queue'}
+                                    </Button>
+                                  </div>
+                                </div>
                               </div>
                             ))
                           ) : (
-                            <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                              No waiting patients in {lane}.
+                            <div className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
+                              No active patient in {lane}.
                             </div>
                           )}
                         </div>
-                      </Card>
-                    )}
-                  </div>
+                      </div>
+
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Waiting in {lane}
+                        </p>
+                        <ScrollArea className="h-[18rem] pr-3">
+                          <div className="space-y-3">
+                            {waiting.length > 0 ? (
+                              waiting.map((item) => (
+                                <div key={item.id} className="rounded-xl bg-muted/50 p-4">
+                                  <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
+                                  <QueueMeta item={item} />
+                                  <Link
+                                    href={getEntryActionPath(item, lane)}
+                                    className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
+                                  >
+                                    {getEntryActionLabel(lane)}
+                                  </Link>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                                No waiting patients in {lane}.
+                              </div>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                  </Card>
                 );
               })}
             </div>
 
-            {hasFullQueueAccess && (
-              <Card className="p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-bold">Recently Completed</h2>
-                  <Link href="/queue-display" target="_blank" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
-                    View public display
-                    <ExternalLink className="w-4 h-4" />
-                  </Link>
-                </div>
+            <Card className="p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-bold">Recently Completed</h2>
+                <Link
+                  href="/queue-display"
+                  target="_blank"
+                  className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                >
+                  View public display
+                  <ExternalLink className="w-4 h-4" />
+                </Link>
+              </div>
+              <ScrollArea className="h-[22rem] pr-3">
                 <div className="space-y-3">
                   {completedQueue.length > 0 ? (
                     completedQueue.map((item) => (
                       <div key={item.id} className="flex items-center justify-between rounded-xl border border-border p-4">
                         <div>
-                          <p className="font-semibold">{item.queueNumber} • {item.patientName}</p>
+                          <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
                           <p className="text-sm text-muted-foreground">
-                            {item.serviceType} • Finished: {item.completedLanes.join(' → ')}
+                            {item.serviceType} | Finished: {item.completedLanes.join(' -> ')}
                           </p>
                         </div>
                         <span className="text-xs font-semibold text-accent">Completed</span>
@@ -606,9 +652,8 @@ export default function QueueManagementPage() {
                     </div>
                   )}
                 </div>
-              </Card>
-            )}
-          </div>
+              </ScrollArea>
+            </Card>
         </div>
       </div>
     </PageLayout>

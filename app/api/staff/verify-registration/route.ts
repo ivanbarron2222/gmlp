@@ -28,6 +28,26 @@ function createCode(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
 
+function getManilaDayRange() {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const manilaDate = formatter.format(now);
+  const start = new Date(`${manilaDate}T00:00:00+08:00`);
+  const end = new Date(`${manilaDate}T00:00:00+08:00`);
+  end.setUTCDate(end.getUTCDate() + 1);
+
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
+}
+
 async function getNextLabOrderNumber(supabase: ReturnType<typeof getSupabaseAdminClient>) {
   const { data, error } = await supabase
     .from('lab_orders')
@@ -150,11 +170,14 @@ function buildDbQueueSteps(
 }
 
 async function getNextQueueNumber(supabase: ReturnType<typeof getSupabaseAdminClient>) {
+  const { startIso, endIso } = getManilaDayRange();
   const { data, error } = await supabase
     .from('queue_entries')
     .select('queue_number')
+    .gte('created_at', startIso)
+    .lt('created_at', endIso)
     .order('created_at', { ascending: false })
-    .limit(100);
+    .limit(200);
 
   if (error) {
     throw error;

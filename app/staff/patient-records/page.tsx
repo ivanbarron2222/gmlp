@@ -15,6 +15,16 @@ export default function PatientRecordsPage() {
   const [pageError, setPageError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const queueId = new URLSearchParams(window.location.search).get('queueId');
+    setSelectedQueueId(queueId);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -41,11 +51,19 @@ export default function PatientRecordsPage() {
         }
 
         const nextRecords = payload.records ?? [];
+        const queuedPatient =
+          selectedQueueId
+            ? nextRecords.find((patient) =>
+                patient.visits.some((visit) => visit.queueEntryId === selectedQueueId)
+              )
+            : null;
+
         setRecords(nextRecords);
         setSelectedPatientId((current) =>
-          current && nextRecords.some((patient) => patient.id === current)
+          queuedPatient?.id ??
+          (current && nextRecords.some((patient) => patient.id === current)
             ? current
-            : nextRecords[0]?.id ?? null
+            : nextRecords[0]?.id ?? null)
         );
       } catch (error) {
         if (!isMounted) {
@@ -62,14 +80,14 @@ export default function PatientRecordsPage() {
       }
     };
 
-    loadRecords();
+    void loadRecords();
     window.addEventListener('focus', loadRecords);
 
     return () => {
       isMounted = false;
       window.removeEventListener('focus', loadRecords);
     };
-  }, []);
+  }, [selectedQueueId]);
 
   const filteredRecords = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -262,6 +280,14 @@ export default function PatientRecordsPage() {
                         </p>
                       )}
                       <p className="mt-1 text-sm text-muted-foreground">
+                        Lab Numbers:{' '}
+                        {selectedPatient.visits.flatMap((visit) => visit.labNumbers).length > 0
+                          ? Array.from(
+                              new Set(selectedPatient.visits.flatMap((visit) => visit.labNumbers))
+                            ).join(', ')
+                          : 'N/A'}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
                         {selectedPatient.emailAddress}
                       </p>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -301,7 +327,11 @@ export default function PatientRecordsPage() {
                     {selectedPatient.visits.map((visit) => (
                       <div
                         key={visit.id}
-                        className="rounded-2xl border border-border bg-muted/20 p-5"
+                        className={`rounded-2xl border bg-muted/20 p-5 ${
+                          selectedQueueId && visit.queueEntryId === selectedQueueId
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border'
+                        }`}
                       >
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -314,6 +344,9 @@ export default function PatientRecordsPage() {
                             <p className="mt-2 text-sm text-muted-foreground">
                               {visit.serviceType}
                               {visit.requestedLabService ? ` - ${visit.requestedLabService}` : ''}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Lab Number: {visit.labNumbers.length > 0 ? visit.labNumbers.join(', ') : 'N/A'}
                             </p>
                             <p className="mt-1 text-xs text-muted-foreground">
                               Created {new Date(visit.createdAt).toLocaleString()}

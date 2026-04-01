@@ -134,7 +134,14 @@ export function Sidebar() {
         );
       case 'cashier':
         return navItems.filter((item) =>
-          ['/dashboard', '/staff/cashier', '/staff/patient-records', '/staff/result-release'].includes(item.href)
+          [
+            '/dashboard',
+            '/staff/patient-registration',
+            '/staff/queue',
+            '/staff/cashier',
+            '/staff/patient-records',
+            '/staff/result-release',
+          ].includes(item.href)
         );
       default:
         return navItems;

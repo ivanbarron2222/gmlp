@@ -45,7 +45,7 @@ export function getRoleLabel(role: StationRole) {
     case 'xray':
       return 'Xray Station';
     case 'cashier':
-      return 'Cashier / Billing';
+      return 'Cashier / Front Desk';
     default:
       return role;
   }
@@ -208,7 +208,7 @@ export function getRoleHomePath(role: StationRole) {
     case 'doctor':
       return '/staff/result-encoding';
     case 'cashier':
-      return '/staff/cashier';
+      return '/staff/patient-registration';
     default:
       return '/dashboard';
   }
