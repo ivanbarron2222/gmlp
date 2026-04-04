@@ -166,7 +166,8 @@ create table public.visits (
 
 create table public.queue_entries (
   id uuid primary key default gen_random_uuid(),
-  queue_number text not null unique,
+  queue_number text not null,
+  queue_date date not null default (timezone('Asia/Manila', now())::date),
   visit_id uuid not null unique references public.visits (id) on delete cascade,
   patient_id uuid not null references public.patients (id) on delete restrict,
   service_type public.service_type not null,
@@ -179,7 +180,8 @@ create table public.queue_entries (
   completed_at timestamptz,
   created_by uuid references public.staff_profiles (id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
-  updated_at timestamptz not null default timezone('utc', now())
+  updated_at timestamptz not null default timezone('utc', now()),
+  constraint queue_entries_queue_number_queue_date_key unique (queue_number, queue_date)
 );
 
 create table public.queue_steps (
@@ -846,4 +848,5 @@ for all
 to authenticated
 using (public.has_role(array['admin', 'pathologist']::public.app_role[]))
 with check (public.has_role(array['admin', 'pathologist']::public.app_role[]));
+
 

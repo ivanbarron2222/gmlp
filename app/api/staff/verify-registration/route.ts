@@ -24,6 +24,25 @@ interface VerifyRegistrationRequest {
   };
 }
 
+function getReadableVerifyError(error: unknown) {
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as { code?: string; message?: string; details?: string };
+    const message = `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.trim();
+
+    if (
+      maybeError.code === '23505' &&
+      (message.includes('queue_entries_queue_number_key') ||
+        message.includes('queue_entries_queue_number_queue_date_key'))
+    ) {
+      return 'Queue numbering is blocked by the database schema. Run the latest queue migration, then try verifying again.';
+    }
+  }
+
+  return error instanceof Error
+    ? error.message
+    : 'Failed to verify and queue registration.';
+}
+
 function createCode(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
@@ -467,8 +486,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : 'Failed to verify and queue registration.',
+        error: getReadableVerifyError(error),
       },
       { status: 500 }
     );
