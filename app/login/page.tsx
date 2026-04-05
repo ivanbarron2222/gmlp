@@ -148,6 +148,13 @@ export default function LoginPage() {
               </div>
             )}
 
+            <div className="text-center text-sm text-muted-foreground">
+              Need a staff account?{' '}
+              <Link href="/staff-signup" className="font-medium text-primary hover:underline">
+                Request access
+              </Link>
+            </div>
+
           </form>
 
           {/* Footer */}

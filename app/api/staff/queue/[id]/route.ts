@@ -23,6 +23,7 @@ export async function GET(
         created_at,
         now_serving_at,
         completed_at,
+        visit_id,
         patients!inner(first_name, middle_name, last_name),
         queue_steps(lane, status, sort_order)
       `)
@@ -33,7 +34,45 @@ export async function GET(
       return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
     }
 
-    return NextResponse.json({ queueEntry: mapQueueEntryRow(data as QueueEntryRow) });
+    const row = data as QueueEntryRow & { visit_id: string };
+    let assignedDoctorId: string | null = null;
+    let assignedDoctorName: string | null = null;
+
+    if (row.visit_id) {
+      const { data: consultationData, error: consultationError } = await supabase
+        .from('consultations')
+        .select(`
+          doctor_id,
+          staff_profiles:doctor_id (
+            full_name
+          )
+        `)
+        .eq('visit_id', row.visit_id)
+        .not('doctor_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (consultationError) {
+        throw consultationError;
+      }
+
+      if (consultationData?.doctor_id) {
+        assignedDoctorId = String(consultationData.doctor_id);
+        const doctorProfile = Array.isArray(consultationData.staff_profiles)
+          ? consultationData.staff_profiles[0]
+          : consultationData.staff_profiles;
+        assignedDoctorName = String(doctorProfile?.full_name ?? '');
+      }
+    }
+
+    return NextResponse.json({
+      queueEntry: mapQueueEntryRow({
+        ...row,
+        assigned_doctor_id: assignedDoctorId,
+        assigned_doctor_name: assignedDoctorName,
+      }),
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to load queue entry.' },

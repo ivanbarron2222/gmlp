@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
+import { Download, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -14,8 +14,11 @@ export default function PatientRecordsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
+  const [downloadingQueueId, setDownloadingQueueId] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -34,7 +37,15 @@ export default function PatientRecordsPage() {
         setPageError('');
         setIsLoading(true);
 
-        const response = await fetch('/api/staff/patient-records', {
+        const params = new URLSearchParams();
+        if (startDate) {
+          params.set('startDate', startDate);
+        }
+        if (endDate) {
+          params.set('endDate', endDate);
+        }
+
+        const response = await fetch(`/api/staff/patient-records${params.toString() ? `?${params.toString()}` : ''}`, {
           cache: 'no-store',
         });
         const payload = (await response.json()) as {
@@ -87,7 +98,31 @@ export default function PatientRecordsPage() {
       isMounted = false;
       window.removeEventListener('focus', loadRecords);
     };
-  }, [selectedQueueId]);
+  }, [selectedQueueId, startDate, endDate]);
+
+  const handleDownloadPdf = async (queueId: string) => {
+    try {
+      setDownloadingQueueId(queueId);
+      const response = await fetch(`/api/public/report-download?queueId=${encodeURIComponent(queueId)}`, {
+        cache: 'no-store',
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; downloadUrl?: string }
+        | null;
+
+      if (!response.ok || !payload?.downloadUrl) {
+        throw new Error(payload?.error ?? 'Released PDF is not available for this visit yet.');
+      }
+
+      window.open(payload.downloadUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : 'Released PDF is not available for this visit yet.'
+      );
+    } finally {
+      setDownloadingQueueId(null);
+    }
+  };
 
   const filteredRecords = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -116,6 +151,14 @@ export default function PatientRecordsPage() {
     filteredRecords.find((patient) => patient.id === selectedPatientId) ??
     filteredRecords[0] ??
     null;
+
+  const selectedPatientStatus = selectedPatient
+    ? selectedPatient.visits.every(
+        (visit) => visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
+      )
+      ? 'Complete'
+      : 'Pending'
+    : null;
 
   const totalVisits = records.reduce((count, patient) => count + patient.visits.length, 0);
   const paidVisits = records.reduce(
@@ -191,14 +234,44 @@ export default function PatientRecordsPage() {
 
         <div className="mt-8 grid gap-6 xl:grid-cols-[0.78fr_1.22fr]">
           <Card className="p-6">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search patient name, company, contact, email, city..."
-                className="pl-10"
-              />
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search patient name, company, contact, email, city..."
+                  className="pl-10"
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    From
+                  </p>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    To
+                  </p>
+                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setStartDate('');
+                    setEndDate('');
+                  }}
+                >
+                  Clear Dates
+                </Button>
+              </div>
             </div>
 
             <div className="mt-6 flex items-center justify-between">
@@ -265,11 +338,28 @@ export default function PatientRecordsPage() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         Selected Patient
                       </p>
-                      <h2 className="mt-2 text-3xl font-bold">
-                        {[selectedPatient.firstName, selectedPatient.middleName, selectedPatient.lastName]
-                          .filter(Boolean)
-                          .join(' ')}
-                      </h2>
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <h2 className="text-3xl font-bold">
+                          {[
+                            selectedPatient.firstName,
+                            selectedPatient.middleName,
+                            selectedPatient.lastName,
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                        </h2>
+                        {selectedPatientStatus && (
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                              selectedPatientStatus === 'Complete'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {selectedPatientStatus}
+                          </span>
+                        )}
+                      </div>
                       <p className="mt-2 text-sm text-muted-foreground">
                         {selectedPatient.birthDate} - {selectedPatient.gender} -{' '}
                         {selectedPatient.contactNumber}
@@ -339,6 +429,17 @@ export default function PatientRecordsPage() {
                               <p className="text-xl font-bold">{visit.queueNumber}</p>
                               <span className="rounded-full bg-background px-3 py-1 text-xs font-semibold">
                                 {visit.visitStatus}
+                              </span>
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                  visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                }`}
+                              >
+                                {visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
+                                  ? 'Complete'
+                                  : 'Pending'}
                               </span>
                             </div>
                             <p className="mt-2 text-sm text-muted-foreground">
@@ -417,23 +518,39 @@ export default function PatientRecordsPage() {
                                 </div>
                               ))}
                             </div>
+                          </div>
+                        )}
 
-                            <div className="mt-4 flex justify-end">
-                              <Button
-                                asChild
-                                variant="outline"
-                                size="sm"
-                                disabled={!visit.queueEntryId}
+                        {visit.queueEntryId && (
+                          <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                href={`/staff/result-release?queueId=${encodeURIComponent(
+                                  visit.queueEntryId
+                                )}`}
                               >
-                                <Link
-                                  href={`/staff/result-release?queueId=${encodeURIComponent(
-                                    visit.queueEntryId
-                                  )}`}
-                                >
-                                  Open Result Release
-                                </Link>
-                              </Button>
-                            </div>
+                                Open Result Release
+                              </Link>
+                            </Button>
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                href={`/report/${encodeURIComponent(visit.queueEntryId)}`}
+                                target="_blank"
+                              >
+                                View Soft Copy
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void handleDownloadPdf(visit.queueEntryId)}
+                              disabled={downloadingQueueId === visit.queueEntryId}
+                            >
+                              <Download className="mr-2 h-4 w-4" />
+                              {downloadingQueueId === visit.queueEntryId
+                                ? 'Preparing PDF...'
+                                : 'Open PDF'}
+                            </Button>
                           </div>
                         )}
                       </div>

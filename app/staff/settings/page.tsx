@@ -11,6 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +24,8 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { readStationRole } from '@/lib/station-role';
 import { formatCurrency } from '@/lib/formatting';
+import { getDefaultAllowedModules, moduleCatalog, type StaffModulePath } from '@/lib/staff-modules';
+import { mapDbRoleToStationRole } from '@/lib/station-role';
 
 type ServiceCatalogRow = {
   id: string;
@@ -53,6 +57,7 @@ type StaffProfileRow = {
   role: string;
   assigned_lane?: string | null;
   is_active: boolean;
+  allowed_modules?: StaffModulePath[];
   updated_at?: string;
 };
 
@@ -80,6 +85,13 @@ const initialStaffForm = {
   role: 'nurse',
 };
 
+const initialStaffEditForm = {
+  full_name: '',
+  role: 'nurse',
+  is_active: true,
+  allowed_modules: [] as StaffModulePath[],
+};
+
 async function getAdminAccessToken() {
   const supabase = getSupabaseBrowserClient();
   const {
@@ -105,10 +117,13 @@ export default function AdminSettingsPage() {
   const [serviceForm, setServiceForm] = useState(initialServiceForm);
   const [companyForm, setCompanyForm] = useState(initialCompanyForm);
   const [staffForm, setStaffForm] = useState(initialStaffForm);
+  const [staffFilter, setStaffFilter] = useState<'all' | 'pending' | 'active'>('all');
   const [editingService, setEditingService] = useState<ServiceCatalogRow | null>(null);
   const [editingCompany, setEditingCompany] = useState<PartnerCompanyRow | null>(null);
+  const [editingStaff, setEditingStaff] = useState<StaffProfileRow | null>(null);
   const [serviceEditForm, setServiceEditForm] = useState(initialServiceForm);
   const [companyEditForm, setCompanyEditForm] = useState(initialCompanyForm);
+  const [staffEditForm, setStaffEditForm] = useState(initialStaffEditForm);
 
   const isAdmin = stationRole === 'admin';
 
@@ -119,6 +134,18 @@ export default function AdminSettingsPage() {
   const activeServices = useMemo(() => services.filter((service) => service.is_active), [services]);
   const activeCompanies = useMemo(() => companies.filter((company) => company.is_active), [companies]);
   const activeStaff = useMemo(() => staff.filter((member) => member.is_active), [staff]);
+  const pendingStaff = useMemo(() => staff.filter((member) => !member.is_active), [staff]);
+  const filteredStaff = useMemo(() => {
+    if (staffFilter === 'pending') {
+      return pendingStaff;
+    }
+
+    if (staffFilter === 'active') {
+      return activeStaff;
+    }
+
+    return staff;
+  }, [activeStaff, pendingStaff, staff, staffFilter]);
 
   const loadSettings = async () => {
     setIsLoading(true);
@@ -295,17 +322,70 @@ export default function AdminSettingsPage() {
 
   const handleStaffSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const defaultModules = mapDbRoleToStationRole(staffForm.role)
+      ? getDefaultAllowedModules(mapDbRoleToStationRole(staffForm.role)!)
+      : [];
     await submitAdminAction(
       {
         kind: 'staff',
         staff: {
           ...staffForm,
           is_active: true,
+          allowed_modules: defaultModules,
         },
       },
       'Staff account has been created.'
     );
     setStaffForm(initialStaffForm);
+  };
+
+  const openStaffEdit = (member: StaffProfileRow) => {
+    const stationRole = mapDbRoleToStationRole(member.role);
+    const fallbackModules = stationRole ? getDefaultAllowedModules(stationRole) : [];
+    setEditingStaff(member);
+    setStaffEditForm({
+      full_name: member.full_name,
+      role: member.role,
+      is_active: member.is_active,
+      allowed_modules:
+        member.allowed_modules && member.allowed_modules.length > 0
+          ? member.allowed_modules
+          : fallbackModules,
+    });
+  };
+
+  const handleStaffModuleToggle = (href: StaffModulePath, checked: boolean) => {
+    setStaffEditForm((current) => ({
+      ...current,
+      allowed_modules: checked
+        ? Array.from(new Set([...current.allowed_modules, href]))
+        : current.allowed_modules.filter((item) => item !== href),
+    }));
+  };
+
+  const handleStaffEditSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingStaff) {
+      return;
+    }
+
+    await submitAdminAction(
+      {
+        kind: 'staff',
+        staff: {
+          id: editingStaff.id,
+          email: editingStaff.email,
+          full_name: staffEditForm.full_name,
+          role: staffEditForm.role as StaffProfileRow['role'],
+          is_active: staffEditForm.is_active,
+          allowed_modules: staffEditForm.allowed_modules,
+        },
+      },
+      'Staff account permissions have been updated.'
+    );
+
+    setEditingStaff(null);
+    setStaffEditForm(initialStaffEditForm);
   };
 
   if (stationRole === null) {
@@ -614,6 +694,8 @@ export default function AdminSettingsPage() {
                       <option value="drug_test">Drug Test</option>
                       <option value="doctor">Doctor</option>
                       <option value="xray">Xray</option>
+                      <option value="ecg">ECG</option>
+                      <option value="encoder">Encoder</option>
                       <option value="cashier">Cashier</option>
                       <option value="pathologist">Pathologist</option>
                     </select>
@@ -626,19 +708,54 @@ export default function AdminSettingsPage() {
 
               <Card className="p-6">
                 <h2 className="text-xl font-bold">Current User Accounts</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Overview of staff profiles already registered in the system.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Overview of staff profiles already registered in the system. Edit a staff row to control module access and activation.</p>
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant={staffFilter === 'all' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setStaffFilter('all')}
+                    >
+                      All Staff
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={staffFilter === 'pending' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setStaffFilter('pending')}
+                    >
+                      Pending Activation
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={staffFilter === 'active' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setStaffFilter('active')}
+                    >
+                      Active Only
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
+                      {pendingStaff.length} pending
+                    </Badge>
+                    <Badge variant="outline">{activeStaff.length} active</Badge>
+                  </div>
+                </div>
                 <div className="mt-5">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
                         <TableHead>Role</TableHead>
+                        <TableHead>Modules</TableHead>
                         <TableHead>Lane</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {staff.map((member) => (
+                      {filteredStaff.map((member) => (
                         <TableRow key={member.id}>
                           <TableCell>
                             <div>
@@ -647,16 +764,40 @@ export default function AdminSettingsPage() {
                             </div>
                           </TableCell>
                           <TableCell>{member.role}</TableCell>
+                          <TableCell>
+                            <p className="text-sm">
+                              {(member.allowed_modules?.length ?? 0) > 0
+                                ? `${member.allowed_modules?.length ?? 0} enabled`
+                                : 'Role default'}
+                            </p>
+                          </TableCell>
                           <TableCell>{member.assigned_lane || 'All / None'}</TableCell>
                           <TableCell>
-                            <Badge variant="outline">{member.is_active ? 'Active' : 'Inactive'}</Badge>
+                            <Badge
+                              className={
+                                member.is_active
+                                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100'
+                                  : 'bg-amber-100 text-amber-700 hover:bg-amber-100'
+                              }
+                            >
+                              {member.is_active ? 'Active' : 'Pending Activation'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="w-16 text-right">
+                            <Button type="button" variant="ghost" size="icon" onClick={() => openStaffEdit(member)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
-                      {!staff.length && !isLoading && (
+                      {!filteredStaff.length && !isLoading && (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground">
-                            No staff profiles found.
+                          <TableCell colSpan={6} className="text-center text-muted-foreground">
+                            {staffFilter === 'pending'
+                              ? 'No pending staff accounts found.'
+                              : staffFilter === 'active'
+                                ? 'No active staff accounts found.'
+                                : 'No staff profiles found.'}
                           </TableCell>
                         </TableRow>
                       )}
@@ -753,6 +894,98 @@ export default function AdminSettingsPage() {
               </Button>
               <Button type="submit" disabled={isSaving}>
                 {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingStaff)} onOpenChange={(open) => !open && setEditingStaff(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Edit Staff Access</DialogTitle>
+            <DialogDescription>Control which modules this staff account can access from the sidebar.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-5" onSubmit={handleStaffEditSubmit}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="edit_staff_name">Full Name</Label>
+                <Input
+                  id="edit_staff_name"
+                  value={staffEditForm.full_name}
+                  onChange={(event) =>
+                    setStaffEditForm((current) => ({ ...current, full_name: event.target.value }))
+                  }
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_staff_role">Role</Label>
+                <Input id="edit_staff_role" value={staffEditForm.role} disabled />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border p-4">
+              <div>
+                <p className="font-semibold">Account Status</p>
+                <p className="text-sm text-muted-foreground">Inactive staff cannot access the system even if the account exists.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">
+                  {staffEditForm.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <Switch
+                  checked={staffEditForm.is_active}
+                  onCheckedChange={(checked) =>
+                    setStaffEditForm((current) => ({ ...current, is_active: checked }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="font-semibold">Allowed Modules</p>
+                <p className="text-sm text-muted-foreground">Only modules valid for this role should be enabled. The sidebar will hide everything else.</p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {moduleCatalog.map((moduleItem) => {
+                  const stationRole = mapDbRoleToStationRole(staffEditForm.role);
+                  const roleDefaults = stationRole ? getDefaultAllowedModules(stationRole) : [];
+                  const isRoleSupported = roleDefaults.includes(moduleItem.href);
+
+                  return (
+                    <label
+                      key={moduleItem.href}
+                      className={`flex items-center gap-3 rounded-xl border p-3 ${
+                        isRoleSupported ? 'bg-background' : 'bg-muted/40 opacity-60'
+                      }`}
+                    >
+                      <Checkbox
+                        checked={staffEditForm.allowed_modules.includes(moduleItem.href)}
+                        disabled={!isRoleSupported}
+                        onCheckedChange={(checked) =>
+                          handleStaffModuleToggle(moduleItem.href, Boolean(checked))
+                        }
+                      />
+                      <div>
+                        <p className="font-medium">{moduleItem.label}</p>
+                        {!isRoleSupported && (
+                          <p className="text-xs text-muted-foreground">Not available for this role</p>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingStaff(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Staff Access'}
               </Button>
             </DialogFooter>
           </form>

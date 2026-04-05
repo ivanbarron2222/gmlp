@@ -16,10 +16,10 @@ import {
 } from '@/lib/patient-records-store';
 import { parseMachineResultText, type ParsedMachineResult } from '@/lib/machine-result-parser';
 
-type LabLane = Extract<QueueLane, 'BLOOD TEST' | 'DRUG TEST' | 'XRAY'>;
+type LabLane = Extract<QueueLane, 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG'>;
 type BloodTestCategory = 'hematology' | 'urinalysis';
 
-const supportedLanes: LabLane[] = ['BLOOD TEST', 'DRUG TEST', 'XRAY'];
+const supportedLanes: LabLane[] = ['BLOOD TEST', 'DRUG TEST', 'XRAY', 'ECG'];
 
 function readLaneParam(rawLane: string | null): LabLane {
   return supportedLanes.includes(rawLane as LabLane) ? (rawLane as LabLane) : 'BLOOD TEST';
@@ -70,6 +70,11 @@ function LabOrdersPageContent() {
     }
 
     const controller = new AbortController();
+
+    if (lane === 'ECG') {
+      setSavedImportFromDb(null);
+      return () => controller.abort();
+    }
 
     const query = new URLSearchParams({
       queueId,
@@ -211,9 +216,11 @@ function LabOrdersPageContent() {
             </p>
             <h1 className="mt-2 text-3xl font-bold">Scanned Patient Workflow</h1>
             <p className="mt-2 text-muted-foreground">
-              {lane === 'BLOOD TEST'
-                ? 'Use the selected queue visit to handle CBC or urinalysis under the BLOOD TEST station and return the patient to general intake once done.'
-                : 'Use the selected queue visit to handle this lab step and return the patient to general intake once done.'}
+      {lane === 'BLOOD TEST'
+        ? 'Use the selected queue visit to handle CBC or urinalysis under the BLOOD TEST station and return the patient to general intake once done.'
+        : lane === 'ECG'
+          ? 'Use the selected queue visit to review the patient profile and complete the ECG step from this station.'
+          : 'Use the selected queue visit to handle this lab step and return the patient to general intake once done.'}
             </p>
           </div>
           <Button asChild variant="outline">
@@ -266,6 +273,8 @@ function LabOrdersPageContent() {
           </Card>
 
           <div className="space-y-6">
+            {lane !== 'ECG' ? (
+            <>
             <Card className="p-6">
               <div className="flex items-center gap-3">
                 <div className="rounded-full bg-primary/10 p-3 text-primary">
@@ -484,6 +493,30 @@ function LabOrdersPageContent() {
                 </div>
               )}
             </Card>
+            </>
+            ) : (
+            <Card className="p-6">
+              <div className="flex items-center gap-3">
+                <FileUp className="h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="text-lg font-bold">ECG Handling</h2>
+                  <p className="text-sm text-muted-foreground">
+                    ECG is currently handled as a direct station workflow. Review the patient visit, perform the ECG process, then mark the step complete here.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                No machine TXT upload is configured for ECG yet. Use the patient visit for profile context and complete the ECG station when done.
+              </div>
+
+              {importError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {importError}
+                </div>
+              )}
+            </Card>
+            )}
           </div>
         </div>
       </div>

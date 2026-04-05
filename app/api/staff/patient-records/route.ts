@@ -11,9 +11,9 @@ import type {
 import type { QueueLane, QueueStatus } from '@/lib/queue-store';
 
 type DbServiceType = 'pre_employment' | 'check_up' | 'lab';
-type DbLabService = 'blood_test' | 'drug_test' | 'xray' | null;
+type DbLabService = 'blood_test' | 'drug_test' | 'xray' | 'ecg' | null;
 type DbGender = 'male' | 'female' | 'other';
-type DbQueueLane = 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray';
+type DbQueueLane = 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray' | 'ecg';
 type DbQueueStatus = 'waiting' | 'now_serving' | 'completed' | 'cancelled' | 'skipped';
 type DbQueueStepStatus = 'pending' | 'serving' | 'completed' | 'skipped' | 'cancelled';
 type DbInvoiceStatus = 'draft' | 'unpaid' | 'paid' | 'void';
@@ -98,7 +98,7 @@ type PaymentRow = {
 type MachineImportRow = {
   id: string;
   visit_id: string;
-  lane: 'blood_test' | 'drug_test' | 'xray';
+  lane: 'blood_test' | 'drug_test' | 'xray' | 'ecg';
   source_order_id: string | null;
   source_sample_id: string | null;
   raw_content: string;
@@ -139,6 +139,8 @@ function toRequestedLabService(service: DbLabService) {
       return 'Drug Test';
     case 'xray':
       return 'Xray';
+    case 'ecg':
+      return 'ECG';
     default:
       return '';
   }
@@ -174,8 +176,11 @@ function buildVisitStatus(
   return 'queued';
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const startDate = url.searchParams.get('startDate');
+    const endDate = url.searchParams.get('endDate');
     const supabase = getSupabaseAdminClient();
 
     const { data: patientsData, error: patientsError } = await supabase
@@ -208,7 +213,7 @@ export async function GET() {
 
     const patientIds = patients.map((patient) => patient.id);
 
-    const { data: visitsData, error: visitsError } = await supabase
+    let visitsQuery = supabase
       .from('visits')
       .select(`
         id,
@@ -221,8 +226,17 @@ export async function GET() {
         created_at,
         updated_at
       `)
-      .in('patient_id', patientIds)
-      .order('created_at', { ascending: false });
+      .in('patient_id', patientIds);
+
+    if (startDate) {
+      visitsQuery = visitsQuery.gte('created_at', `${startDate}T00:00:00+08:00`);
+    }
+
+    if (endDate) {
+      visitsQuery = visitsQuery.lte('created_at', `${endDate}T23:59:59.999+08:00`);
+    }
+
+    const { data: visitsData, error: visitsError } = await visitsQuery.order('created_at', { ascending: false });
 
     if (visitsError) {
       throw new Error(visitsError.message);
@@ -503,7 +517,7 @@ export async function GET() {
         createdAt: patient.created_at,
         visits: patientVisits,
       };
-    });
+    }).filter((patient) => patient.visits.length > 0 || (!startDate && !endDate));
 
     return NextResponse.json({ records });
   } catch (error) {

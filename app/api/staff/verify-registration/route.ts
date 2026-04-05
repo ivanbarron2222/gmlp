@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 
 type ServiceNeeded = 'Pre-Employment' | 'Check-Up' | 'Lab';
-type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | '';
+type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG' | '';
 
 interface VerifyRegistrationRequest {
   registrationId?: string | null;
@@ -20,6 +20,7 @@ interface VerifyRegistrationRequest {
     province: string;
     serviceNeeded: ServiceNeeded;
     requestedLabService: RequestedLabService;
+    assignedDoctorId?: string | null;
     notes: string;
   };
 }
@@ -122,6 +123,8 @@ function toDbLabService(service: RequestedLabService) {
       return 'drug_test';
     case 'Xray':
       return 'xray';
+    case 'ECG':
+      return 'ecg';
     default:
       return null;
   }
@@ -146,6 +149,8 @@ function toLocalRequestedLane(service: RequestedLabService) {
       return 'DRUG TEST';
     case 'Xray':
       return 'XRAY';
+    case 'ECG':
+      return 'ECG';
     default:
       return undefined;
   }
@@ -154,10 +159,10 @@ function toLocalRequestedLane(service: RequestedLabService) {
 function buildPendingLanes(
   service: ServiceNeeded,
   requestedLabService: RequestedLabService
-): Array<'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY'> {
+): Array<'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY' | 'ECG'> {
   switch (service) {
     case 'Pre-Employment':
-      return ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY'];
+      return ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
     case 'Check-Up':
       return ['DOCTOR'];
     case 'Lab': {
@@ -178,6 +183,7 @@ function buildDbQueueSteps(
         { lane: 'drug_test', sort_order: 2, is_required: true },
         { lane: 'doctor', sort_order: 3, is_required: true },
         { lane: 'xray', sort_order: 4, is_required: true },
+        { lane: 'ecg', sort_order: 5, is_required: true },
       ];
     case 'Check-Up':
       return [{ lane: 'doctor', sort_order: 1, is_required: true }];
@@ -188,8 +194,23 @@ function buildDbQueueSteps(
   }
 }
 
-async function getNextQueueNumber(supabase: ReturnType<typeof getSupabaseAdminClient>) {
+function getQueuePrefix(service: ServiceNeeded) {
+  switch (service) {
+    case 'Pre-Employment':
+      return 'P';
+    case 'Check-Up':
+      return 'C';
+    case 'Lab':
+      return 'L';
+  }
+}
+
+async function getNextQueueNumber(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  service: ServiceNeeded
+) {
   const { startIso, endIso } = getManilaDayRange();
+  const prefix = getQueuePrefix(service);
   const { data, error } = await supabase
     .from('queue_entries')
     .select('queue_number')
@@ -203,11 +224,17 @@ async function getNextQueueNumber(supabase: ReturnType<typeof getSupabaseAdminCl
   }
 
   const maxNumber = (data ?? []).reduce((highest, row) => {
-    const value = Number.parseInt(String(row.queue_number ?? '').split('-')[1] ?? '0', 10);
+    const [currentPrefix, numeric] = String(row.queue_number ?? '').split('-');
+
+    if (currentPrefix !== prefix) {
+      return highest;
+    }
+
+    const value = Number.parseInt(numeric ?? '0', 10);
     return Number.isNaN(value) ? highest : Math.max(highest, value);
   }, 0);
 
-  return `A-${String(maxNumber + 1).padStart(3, '0')}`;
+  return `${prefix}-${String(maxNumber + 1).padStart(3, '0')}`;
 }
 
 async function findOrCreatePatient(
@@ -304,7 +331,7 @@ export async function POST(request: Request) {
       throw visitError;
     }
 
-    const queueNumber = await getNextQueueNumber(supabase);
+    const queueNumber = await getNextQueueNumber(supabase, formData.serviceNeeded);
     const { data: queueEntry, error: queueError } = await supabase
       .from('queue_entries')
       .insert({
@@ -345,6 +372,7 @@ export async function POST(request: Request) {
       const { error: consultationError } = await supabase.from('consultations').insert({
         visit_id: visit.id,
         queue_entry_id: queueEntry.id,
+        doctor_id: formData.assignedDoctorId || null,
         status: 'pending',
       });
 
@@ -353,8 +381,11 @@ export async function POST(request: Request) {
       }
     }
 
+    let createdLabNumbers: string[] = [];
+
     if (formData.serviceNeeded === 'Pre-Employment' || formData.serviceNeeded === 'Lab') {
       const nextLabOrderNumber = await getNextLabOrderNumber(supabase);
+      createdLabNumbers = [nextLabOrderNumber];
 
       const { data: labOrder, error: labOrderError } = await supabase
         .from('lab_orders')
@@ -396,6 +427,12 @@ export async function POST(request: Request) {
                 test_code: 'PRE-XRAY',
                 test_name: 'Pre-Employment Xray',
               },
+              {
+                service_lane: 'ecg',
+                requested_lab_service: 'ecg',
+                test_code: 'PRE-ECG',
+                test_name: 'Pre-Employment ECG',
+              },
             ]
           : [
               {
@@ -412,8 +449,8 @@ export async function POST(request: Request) {
             (
               item
             ): item is {
-              service_lane: 'blood_test' | 'drug_test' | 'xray';
-              requested_lab_service: 'blood_test' | 'drug_test' | 'xray';
+              service_lane: 'blood_test' | 'drug_test' | 'xray' | 'ecg';
+              requested_lab_service: 'blood_test' | 'drug_test' | 'xray' | 'ecg';
               test_code: string;
               test_name: string;
             } => Boolean(item.service_lane && item.requested_lab_service)
@@ -451,6 +488,21 @@ export async function POST(request: Request) {
     const fullName = [formData.firstName, formData.middleName, formData.lastName]
       .filter(Boolean)
       .join(' ');
+    let assignedDoctorName: string | null = null;
+
+    if (formData.assignedDoctorId) {
+      const { data: doctorProfile, error: doctorProfileError } = await supabase
+        .from('staff_profiles')
+        .select('full_name')
+        .eq('id', formData.assignedDoctorId)
+        .maybeSingle();
+
+      if (doctorProfileError) {
+        throw doctorProfileError;
+      }
+
+      assignedDoctorName = String(doctorProfile?.full_name ?? '');
+    }
 
     return NextResponse.json({
       patient: {
@@ -481,7 +533,10 @@ export async function POST(request: Request) {
         counter: 'General Intake',
         status: 'waiting',
         createdAt: queueEntry.created_at,
+        assignedDoctorId: formData.assignedDoctorId || undefined,
+        assignedDoctorName: assignedDoctorName || undefined,
       },
+      labNumbers: createdLabNumbers,
     });
   } catch (error) {
     return NextResponse.json(

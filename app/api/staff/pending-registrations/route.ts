@@ -29,6 +29,8 @@ function mapRegistration(row: Record<string, unknown>) {
           ? 'Drug Test'
           : row.requested_lab_service === 'xray'
             ? 'Xray'
+            : row.requested_lab_service === 'ecg'
+              ? 'ECG'
             : '',
     notes: String(row.notes ?? ''),
   };

@@ -213,6 +213,15 @@ These are DB-backed now:
 - Cashier now reads service pricing from `service_catalog` through `/api/staff/service-catalog`
 - Partner companies are stored, but patient registration still uses free-text company input for now
 
+## Current Pending Work
+
+Still pending after the latest queue/ECG pass:
+- doctor assignment and preferred-doctor routing for check-up patients
+- admin-managed per-user module permissions
+- activity log
+- patient summary with clear Complete / Pending badge
+- patient-record date-range filter and PDF access
+- result-release queue search bar
 ## Dashboard Notes
 
 - `/dashboard` is now DB-backed and should not use mock dashboard metrics
@@ -244,3 +253,4 @@ These are DB-backed now:
 - After substantial route/build changes, also validate with `npm run build`
 - When touching auth or data access, extend the Supabase-backed path rather than reintroducing localStorage
 - If editing hidden `.codex` or some migration files on Windows and `apply_patch` fails with sandbox refresh issues, a direct file write is acceptable as fallback
+

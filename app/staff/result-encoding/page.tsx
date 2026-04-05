@@ -9,11 +9,17 @@ import { Button } from '@/components/ui/button';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchQueueEntry, postQueueAction } from '@/lib/queue-api';
 import { getQueueVisitPath, QueueEntry } from '@/lib/queue-store';
+import { readStaffProfile } from '@/lib/station-role';
 
 function ResultEncodingPageContent() {
   const searchParams = useSearchParams();
   const queueId = searchParams.get('queueId');
   const [entry, setEntry] = useState<QueueEntry | null>(null);
+  const [staffProfileId, setStaffProfileId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStaffProfileId(readStaffProfile()?.id ?? null);
+  }, []);
 
   useEffect(() => {
     if (!queueId) {
@@ -49,7 +55,12 @@ function ResultEncodingPageContent() {
       return;
     }
 
-    const nextQueue = await postQueueAction({ action: 'start_step', queueId, lane: 'DOCTOR' });
+    const nextQueue = await postQueueAction({
+      action: 'start_step',
+      queueId,
+      lane: 'DOCTOR',
+      actorStaffId: staffProfileId ?? undefined,
+    });
     setEntry(nextQueue.find((item) => item.id === queueId) ?? null);
   };
 
@@ -62,7 +73,7 @@ function ResultEncodingPageContent() {
     setEntry(nextQueue.find((item) => item.id === queueId) ?? null);
   };
 
-  const handleAddReferral = async (lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY') => {
+  const handleAddReferral = async (lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG') => {
     if (!entry || !queueId) {
       return;
     }
@@ -148,6 +159,14 @@ function ResultEncodingPageContent() {
                 </p>
                 <p className="mt-1 font-semibold">{entry.status}</p>
               </div>
+              {entry.assignedDoctorName && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Assigned Doctor
+                  </p>
+                  <p className="mt-1 font-semibold">{entry.assignedDoctorName}</p>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -224,6 +243,13 @@ function ResultEncodingPageContent() {
                   disabled={!isCheckUp}
                 >
                   Add Xray
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleAddReferral('ECG')}
+                  disabled={!isCheckUp}
+                >
+                  Add ECG
                 </Button>
               </div>
             </Card>

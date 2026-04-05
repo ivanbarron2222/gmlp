@@ -1,5 +1,11 @@
 export type QueueStatus = 'waiting' | 'serving' | 'completed';
-export type QueueLane = 'GENERAL' | 'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY';
+export type QueueLane =
+  | 'GENERAL'
+  | 'BLOOD TEST'
+  | 'DRUG TEST'
+  | 'DOCTOR'
+  | 'XRAY'
+  | 'ECG';
 export type DisplayLane = QueueLane | 'PRIORITY LANE';
 export type ServiceType =
   | 'PRE-EMPLOYMENT'
@@ -20,10 +26,12 @@ export interface QueueEntry {
   status: QueueStatus;
   createdAt: string;
   calledAt?: string;
+  assignedDoctorId?: string;
+  assignedDoctorName?: string;
 }
 
-export const queueLanes: QueueLane[] = ['GENERAL', 'BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY'];
-export const serviceLanes: QueueLane[] = ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY'];
+export const queueLanes: QueueLane[] = ['GENERAL', 'BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
+export const serviceLanes: QueueLane[] = ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
 export const serviceTypes: ServiceType[] = [
   'PRE-EMPLOYMENT',
   'CHECK-UP',
@@ -85,7 +93,7 @@ export function buildQueuePath(
 ): QueueLane[] {
   switch (serviceType) {
     case 'PRE-EMPLOYMENT':
-      return ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY'];
+      return ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
     case 'CHECK-UP':
       return ['DOCTOR'];
     case 'LAB':
@@ -151,7 +159,7 @@ export function addQueueEntry(
 ) {
   const nextEntry: QueueEntry = {
     id: `queue-${Date.now()}`,
-    queueNumber: getNextQueueNumber(queue),
+    queueNumber: getNextQueueNumber(queue, input.serviceType),
     patientName: input.patientName,
     serviceType: input.serviceType,
     requestedLabLane: input.requestedLabLane,
@@ -175,7 +183,18 @@ export function writeQueue(queue: QueueEntry[]) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
 }
 
-export function getNextQueueNumber(queue: QueueEntry[]) {
+function getQueuePrefix(serviceType: ServiceType) {
+  switch (serviceType) {
+    case 'PRE-EMPLOYMENT':
+      return 'P';
+    case 'CHECK-UP':
+      return 'C';
+    case 'LAB':
+      return 'L';
+  }
+}
+
+export function getNextQueueNumber(queue: QueueEntry[], serviceType: ServiceType) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
     year: 'numeric',
@@ -183,6 +202,7 @@ export function getNextQueueNumber(queue: QueueEntry[]) {
     day: '2-digit',
   });
   const todayInManila = formatter.format(new Date());
+  const prefix = getQueuePrefix(serviceType);
 
   const maxNumber = queue.reduce((highest, item) => {
     const itemDay = item.createdAt ? formatter.format(new Date(item.createdAt)) : '';
@@ -191,11 +211,17 @@ export function getNextQueueNumber(queue: QueueEntry[]) {
       return highest;
     }
 
-    const numericPart = Number.parseInt(item.queueNumber.split('-')[1] ?? '0', 10);
+    const [itemPrefix, rawNumericPart] = item.queueNumber.split('-');
+
+    if (itemPrefix !== prefix) {
+      return highest;
+    }
+
+    const numericPart = Number.parseInt(rawNumericPart ?? '0', 10);
     return Number.isNaN(numericPart) ? highest : Math.max(highest, numericPart);
   }, 0);
 
-  return `A-${String(maxNumber + 1).padStart(3, '0')}`;
+  return `${prefix}-${String(maxNumber + 1).padStart(3, '0')}`;
 }
 
 export function getLaneLabel(entry: QueueEntry): DisplayLane {

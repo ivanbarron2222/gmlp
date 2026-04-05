@@ -314,6 +314,7 @@ export default function PatientRegistrationPage() {
                     <option value="Blood Test">Blood Test</option>
                     <option value="Drug Test">Drug Test</option>
                     <option value="Xray">Xray</option>
+                    <option value="ECG">ECG</option>
                   </select>
                 </div>
               )}

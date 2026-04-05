@@ -1,10 +1,17 @@
 import type { QueueEntry, QueueLane, QueueStatus, ServiceType } from '@/lib/queue-store';
 
 type DbServiceType = 'pre_employment' | 'check_up' | 'lab';
-type DbQueueLane = 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray';
+type DbQueueLane =
+  | 'general'
+  | 'priority_lane'
+  | 'blood_test'
+  | 'drug_test'
+  | 'doctor'
+  | 'xray'
+  | 'ecg';
 type DbQueueStatus = 'waiting' | 'now_serving' | 'completed' | 'cancelled' | 'skipped';
 type DbQueueStepStatus = 'pending' | 'serving' | 'completed' | 'skipped' | 'cancelled';
-type DbLabService = 'blood_test' | 'drug_test' | 'xray' | null;
+type DbLabService = 'blood_test' | 'drug_test' | 'xray' | 'ecg' | null;
 
 export interface QueueEntryRow {
   id: string;
@@ -38,6 +45,8 @@ export interface QueueEntryRow {
         sort_order: number;
       }>
     | null;
+  assigned_doctor_id?: string | null;
+  assigned_doctor_name?: string | null;
 }
 
 export function dbLaneToUiLane(lane: DbQueueLane): QueueLane {
@@ -50,6 +59,8 @@ export function dbLaneToUiLane(lane: DbQueueLane): QueueLane {
       return 'DOCTOR';
     case 'xray':
       return 'XRAY';
+    case 'ecg':
+      return 'ECG';
     default:
       return 'GENERAL';
   }
@@ -65,6 +76,8 @@ export function uiLaneToDbLane(lane: QueueLane): DbQueueLane {
       return 'doctor';
     case 'XRAY':
       return 'xray';
+    case 'ECG':
+      return 'ecg';
     default:
       return 'general';
   }
@@ -100,6 +113,8 @@ export function dbLabServiceToUiRequestedLane(service: DbLabService): QueueEntry
       return 'DRUG TEST';
     case 'xray':
       return 'XRAY';
+    case 'ecg':
+      return 'ECG';
     default:
       return undefined;
   }
@@ -160,6 +175,8 @@ export function mapQueueEntryRow(row: QueueEntryRow): QueueEntry {
     status: dbStatusToUiStatus(row.queue_status),
     createdAt: row.created_at,
     calledAt: row.now_serving_at ?? undefined,
+    assignedDoctorId: row.assigned_doctor_id ?? undefined,
+    assignedDoctorName: row.assigned_doctor_name ?? undefined,
   };
 }
 

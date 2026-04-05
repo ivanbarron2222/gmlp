@@ -4,10 +4,11 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import QRCode from 'qrcode';
-import { Download, Eye, EyeOff, Mail, ZoomIn, ZoomOut } from 'lucide-react';
+import { Download, Eye, EyeOff, Mail, Search, ZoomIn, ZoomOut } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { PageLayout } from '@/components/layout/page-layout';
 import { getPublicAppUrl } from '@/lib/app-url';
 import { readStaffProfile } from '@/lib/station-role';
@@ -157,6 +158,7 @@ function ResultReleasePageContent() {
     }>
   >([]);
   const [isLoadingReleaseList, setIsLoadingReleaseList] = useState(false);
+  const [releaseSearch, setReleaseSearch] = useState('');
 
   useEffect(() => {
     setIsLoadingReleaseList(true);
@@ -368,6 +370,23 @@ function ResultReleasePageContent() {
       : reportMeta?.reportStatus === 'validated'
         ? 'processing'
         : 'pending';
+
+  const summaryStatus =
+    reportMeta?.reportStatus === 'released' ? 'Complete' : 'Pending';
+
+  const filteredReleaseItems = releaseItems.filter((item) => {
+    const query = releaseSearch.trim().toLowerCase();
+
+    if (!query) {
+      return true;
+    }
+
+    return (
+      item.queueNumber.toLowerCase().includes(query) ||
+      item.patientName.toLowerCase().includes(query) ||
+      item.company.toLowerCase().includes(query)
+    );
+  });
 
   const handlePrintReport = () => {
     if (typeof window === 'undefined' || !reportRef.current) {
@@ -748,13 +767,23 @@ function ResultReleasePageContent() {
                 </span>
               </div>
 
+              <div className="relative mt-4">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={releaseSearch}
+                  onChange={(event) => setReleaseSearch(event.target.value)}
+                  placeholder="Search queue number, patient, company..."
+                  className="pl-9"
+                />
+              </div>
+
               <div className="mt-4 h-[60vh] min-h-[340px] space-y-3 overflow-y-auto pr-2">
                 {isLoadingReleaseList ? (
                   <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
                     Loading release queue...
                   </div>
-                ) : releaseItems.length > 0 ? (
-                  releaseItems.map((item) => {
+                ) : filteredReleaseItems.length > 0 ? (
+                  filteredReleaseItems.map((item) => {
                     const isActive = item.queueId === queueId;
 
                     return (
@@ -835,6 +864,22 @@ function ResultReleasePageContent() {
                     Company
                   </p>
                   <p className="mt-1 font-medium">{reportData.patient.company}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Status
+                  </p>
+                  <p className="mt-1">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        summaryStatus === 'Complete'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {summaryStatus}
+                    </span>
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

@@ -11,10 +11,10 @@ import {
 import type { QueueEntry, QueueLane } from '@/lib/queue-store';
 
 type ActionBody =
-  | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'> }
-  | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'> }
+  | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
+  | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'finish_step'; queueId: string }
-  | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'> }
+  | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> };
 
 function createCode(prefix: string) {
@@ -71,18 +71,64 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
     throw error;
   }
 
-  return (data ?? []) as Array<
+  const rows = (data ?? []) as Array<
     QueueEntryRow & {
       visit_id: string;
       patient_id: string;
       queue_steps: Array<{
         id: string;
-        lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray';
+        lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray' | 'ecg';
         status: 'pending' | 'serving' | 'completed' | 'skipped' | 'cancelled';
         sort_order: number;
       }>;
     }
   >;
+
+  const visitIds = rows.map((row) => row.visit_id).filter(Boolean);
+  const doctorByVisitId = new Map<string, { id: string; name: string }>();
+
+  if (visitIds.length > 0) {
+    const { data: consultationsData, error: consultationsError } = await supabase
+      .from('consultations')
+      .select(`
+        visit_id,
+        doctor_id,
+        staff_profiles:doctor_id (
+          full_name
+        ),
+        created_at
+      `)
+      .in('visit_id', visitIds)
+      .not('doctor_id', 'is', null)
+      .order('created_at', { ascending: false });
+
+    if (consultationsError) {
+      throw consultationsError;
+    }
+
+    for (const consultation of consultationsData ?? []) {
+      const visitId = String(consultation.visit_id ?? '');
+
+      if (!visitId || doctorByVisitId.has(visitId) || !consultation.doctor_id) {
+        continue;
+      }
+
+      const doctorProfile = Array.isArray(consultation.staff_profiles)
+        ? consultation.staff_profiles[0]
+        : consultation.staff_profiles;
+
+      doctorByVisitId.set(visitId, {
+        id: String(consultation.doctor_id),
+        name: String(doctorProfile?.full_name ?? ''),
+      });
+    }
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    assigned_doctor_id: doctorByVisitId.get(row.visit_id)?.id ?? null,
+    assigned_doctor_name: doctorByVisitId.get(row.visit_id)?.name ?? null,
+  }));
 }
 
 async function fetchQueueRowById(supabase: ReturnType<typeof getSupabaseAdminClient>, queueId: string) {
@@ -95,6 +141,95 @@ async function respondWithQueue(supabase: ReturnType<typeof getSupabaseAdminClie
   return NextResponse.json({
     queue: rows.map((row) => mapQueueEntryRow(row)),
   });
+}
+
+async function completeCurrentStepAndQueue(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  row: Awaited<ReturnType<typeof fetchQueueRows>>[number]
+) {
+  const currentLane = row.current_lane;
+  const currentStep = row.queue_steps.find((step) => step.lane === currentLane);
+
+  if (!currentStep) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const { error: stepError } = await supabase
+    .from('queue_steps')
+    .update({ status: 'completed', completed_at: now })
+    .eq('id', currentStep.id);
+
+  if (stepError) {
+    throw stepError;
+  }
+
+  const remainingPending = row.queue_steps.filter(
+    (step) => step.id !== currentStep.id && (step.status === 'pending' || step.status === 'serving')
+  );
+
+  if (currentLane === 'doctor') {
+    await supabase
+      .from('consultations')
+      .update({ status: 'completed', completed_at: now })
+      .eq('visit_id', row.visit_id);
+  }
+
+  if (remainingPending.length === 0) {
+    const { error } = await supabase
+      .from('queue_entries')
+      .update({
+        queue_status: 'completed',
+        completed_at: now,
+      })
+      .eq('id', row.id);
+
+    if (error) {
+      throw error;
+    }
+
+    const { error: visitError } = await supabase
+      .from('visits')
+      .update({ status: 'completed', completed_at: now })
+      .eq('id', row.visit_id);
+
+    if (visitError) {
+      throw visitError;
+    }
+  } else {
+    const { error } = await supabase
+      .from('queue_entries')
+      .update({
+        current_lane: 'general',
+        counter_name: row.priority_lane ? 'Priority Lane' : 'General Intake',
+        queue_status: 'waiting',
+      })
+      .eq('id', row.id);
+
+    if (error) {
+      throw error;
+    }
+
+    const { error: visitError } = await supabase
+      .from('visits')
+      .update({ current_lane: 'general' })
+      .eq('id', row.visit_id);
+
+    if (visitError) {
+      throw visitError;
+    }
+  }
+}
+
+function matchesDoctorAssignment(
+  row: Awaited<ReturnType<typeof fetchQueueRows>>[number],
+  actorStaffId?: string
+) {
+  if (!actorStaffId) {
+    return true;
+  }
+
+  return row.assigned_doctor_id === actorStaffId;
 }
 
 export async function POST(request: Request) {
@@ -112,6 +247,7 @@ export async function POST(request: Request) {
             row.queue_status === 'waiting' &&
             row.current_lane === 'general' &&
             row.priority_lane &&
+            matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined) &&
             canEnterLane(entry, lane)
         );
 
@@ -122,6 +258,7 @@ export async function POST(request: Request) {
             row.queue_status === 'waiting' &&
             row.current_lane === 'general' &&
             !row.priority_lane &&
+            matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined) &&
             canEnterLane(entry, lane)
         );
 
@@ -160,39 +297,69 @@ export async function POST(request: Request) {
       const dbLane = uiLaneToDbLane(body.lane);
       const rows = await fetchQueueRows(supabase);
       const currentServing = rows.find(
-        (row) => row.current_lane === dbLane && row.queue_status === 'now_serving'
-      );
-      const nextWaiting = rows.find(
-        (row) => row.current_lane === dbLane && row.queue_status === 'waiting'
+        (row) =>
+          row.current_lane === dbLane &&
+          row.queue_status === 'now_serving' &&
+          matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined)
       );
 
       if (currentServing) {
-        const { error } = await supabase
-          .from('queue_entries')
-          .update({ queue_status: 'waiting' })
-          .eq('id', currentServing.id);
-
-        if (error) {
-          throw error;
-        }
-
-        const currentStep = currentServing.queue_steps.find(
-          (step) => step.lane === dbLane && step.status === 'serving'
-        );
-
-        if (currentStep) {
-          const { error: stepError } = await supabase
-            .from('queue_steps')
-            .update({ status: 'pending' })
-            .eq('id', currentStep.id);
-
-          if (stepError) {
-            throw stepError;
-          }
-        }
+        await completeCurrentStepAndQueue(supabase, currentServing);
       }
 
+      const refreshedRows = await fetchQueueRows(supabase);
+      const nextWaiting =
+        refreshedRows.find(
+          (row) =>
+            row.current_lane === dbLane &&
+            row.queue_status === 'waiting' &&
+            matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined)
+        ) ??
+        refreshedRows
+          .map((row) => ({ row, entry: mapQueueEntryRow(row) }))
+          .find(
+            ({ row, entry }) =>
+              row.queue_status === 'waiting' &&
+              row.current_lane === 'general' &&
+              row.priority_lane &&
+              matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined) &&
+              canEnterLane(entry, body.lane)
+          )?.row ??
+        refreshedRows
+          .map((row) => ({ row, entry: mapQueueEntryRow(row) }))
+          .find(
+            ({ row, entry }) =>
+              row.queue_status === 'waiting' &&
+              row.current_lane === 'general' &&
+              !row.priority_lane &&
+              matchesDoctorAssignment(row, body.lane === 'DOCTOR' ? body.actorStaffId : undefined) &&
+              canEnterLane(entry, body.lane)
+          )?.row;
+
       if (nextWaiting) {
+        if (nextWaiting.current_lane === 'general') {
+          const { error: moveError } = await supabase
+            .from('queue_entries')
+            .update({
+              current_lane: dbLane,
+              counter_name: uiLaneLabel(body.lane, nextWaiting.priority_lane),
+            })
+            .eq('id', nextWaiting.id);
+
+          if (moveError) {
+            throw moveError;
+          }
+
+          const { error: visitMoveError } = await supabase
+            .from('visits')
+            .update({ current_lane: dbLane })
+            .eq('id', nextWaiting.visit_id);
+
+          if (visitMoveError) {
+            throw visitMoveError;
+          }
+        }
+
         const now = new Date().toISOString();
         const { error } = await supabase
           .from('queue_entries')
@@ -219,7 +386,11 @@ export async function POST(request: Request) {
         }
       }
 
-      return respondWithQueue(supabase);
+      const queueRows = await fetchQueueRows(supabase);
+      return NextResponse.json({
+        queue: queueRows.map((row) => mapQueueEntryRow(row)),
+        activatedQueueId: nextWaiting?.id ?? null,
+      });
     }
 
     if (body.action === 'start_step') {
@@ -233,8 +404,10 @@ export async function POST(request: Request) {
       const entry = mapQueueEntryRow(row);
       const canStartCurrentLane = entry.currentLane === lane && entry.pendingLanes.includes(lane);
       const canMoveFromGeneral = entry.currentLane === 'GENERAL' && canEnterLane(entry, lane);
+      const doctorMatches =
+        lane !== 'DOCTOR' || matchesDoctorAssignment(row, body.actorStaffId);
 
-      if (!canStartCurrentLane && !canMoveFromGeneral) {
+      if ((!canStartCurrentLane && !canMoveFromGeneral) || !doctorMatches) {
         return respondWithQueue(supabase);
       }
 
@@ -294,80 +467,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
       }
 
-      const currentLane = row.current_lane;
-      const currentStep = row.queue_steps.find((step) => step.lane === currentLane);
-
-      if (!currentStep) {
+      if (!row.queue_steps.find((step) => step.lane === row.current_lane)) {
         return respondWithQueue(supabase);
       }
-
-      const now = new Date().toISOString();
-      const { error: stepError } = await supabase
-        .from('queue_steps')
-        .update({ status: 'completed', completed_at: now })
-        .eq('id', currentStep.id);
-
-      if (stepError) {
-        throw stepError;
-      }
-
-      const remainingPending = row.queue_steps.filter(
-        (step) =>
-          step.id !== currentStep.id &&
-          (step.status === 'pending' || step.status === 'serving')
-      );
-
-      if (currentLane === 'doctor') {
-        await supabase
-          .from('consultations')
-          .update({ status: 'completed', completed_at: now })
-          .eq('visit_id', row.visit_id);
-      }
-
-      if (remainingPending.length === 0) {
-        const { error } = await supabase
-          .from('queue_entries')
-          .update({
-            queue_status: 'completed',
-            completed_at: now,
-          })
-          .eq('id', row.id);
-
-        if (error) {
-          throw error;
-        }
-
-        const { error: visitError } = await supabase
-          .from('visits')
-          .update({ status: 'completed', completed_at: now })
-          .eq('id', row.visit_id);
-
-        if (visitError) {
-          throw visitError;
-        }
-      } else {
-        const { error } = await supabase
-          .from('queue_entries')
-          .update({
-            current_lane: 'general',
-            counter_name: row.priority_lane ? 'Priority Lane' : 'General Intake',
-            queue_status: 'waiting',
-          })
-          .eq('id', row.id);
-
-        if (error) {
-          throw error;
-        }
-
-        const { error: visitError } = await supabase
-          .from('visits')
-          .update({ current_lane: 'general' })
-          .eq('id', row.visit_id);
-
-        if (visitError) {
-          throw visitError;
-        }
-      }
+      await completeCurrentStepAndQueue(supabase, row);
 
       return respondWithQueue(supabase);
     }
@@ -440,9 +543,30 @@ export async function POST(request: Request) {
         labOrderId = createdOrder.id;
       }
 
-      const testCode = body.lane === 'BLOOD TEST' ? 'REF-BLOOD' : body.lane === 'DRUG TEST' ? 'REF-DRUG' : 'REF-XRAY';
-      const testName = body.lane === 'BLOOD TEST' ? 'Blood Test Referral' : body.lane === 'DRUG TEST' ? 'Drug Test Referral' : 'Xray Referral';
-      const requestedLabService = body.lane === 'BLOOD TEST' ? 'blood_test' : body.lane === 'DRUG TEST' ? 'drug_test' : 'xray';
+      const testCode =
+        body.lane === 'BLOOD TEST'
+          ? 'REF-BLOOD'
+          : body.lane === 'DRUG TEST'
+            ? 'REF-DRUG'
+            : body.lane === 'XRAY'
+              ? 'REF-XRAY'
+              : 'REF-ECG';
+      const testName =
+        body.lane === 'BLOOD TEST'
+          ? 'Blood Test Referral'
+          : body.lane === 'DRUG TEST'
+            ? 'Drug Test Referral'
+            : body.lane === 'XRAY'
+              ? 'Xray Referral'
+              : 'ECG Referral';
+      const requestedLabService =
+        body.lane === 'BLOOD TEST'
+          ? 'blood_test'
+          : body.lane === 'DRUG TEST'
+            ? 'drug_test'
+            : body.lane === 'XRAY'
+              ? 'xray'
+              : 'ecg';
 
       const { data: existingItem, error: existingItemError } = await supabase
         .from('lab_order_items')

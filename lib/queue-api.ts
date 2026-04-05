@@ -28,10 +28,10 @@ export async function fetchQueueEntry(queueId: string) {
 
 export async function postQueueAction(
   body:
-    | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'> }
-    | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'> }
+    | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
+    | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'finish_step'; queueId: string }
-    | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'> }
+    | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> }
 ) {
   const response = await fetch('/api/staff/queue/action', {
@@ -47,6 +47,30 @@ export async function postQueueAction(
     throw new Error(payload?.error ?? 'Failed to update queue.');
   }
 
-  const payload = (await response.json()) as { queue: QueueEntry[] };
+  const payload = (await response.json()) as { queue: QueueEntry[]; activatedQueueId?: string | null };
   return payload.queue;
+}
+
+export async function postQueueActionWithContext(
+  body:
+    | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
+    | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
+    | { action: 'finish_step'; queueId: string }
+    | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
+    | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> }
+) {
+  const response = await fetch('/api/staff/queue/action', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? 'Failed to update queue.');
+  }
+
+  return (await response.json()) as { queue: QueueEntry[]; activatedQueueId?: string | null };
 }

@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Activity, Clock3, ExternalLink, MonitorPlay, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PageLayout } from '@/components/layout/page-layout';
-import { fetchQueueEntries, postQueueAction } from '@/lib/queue-api';
+import { fetchQueueEntries, postQueueAction, postQueueActionWithContext } from '@/lib/queue-api';
 import {
   QueueEntry,
   QueueLane,
@@ -16,7 +17,13 @@ import {
   getQueueWorkflowPath,
   serviceLanes,
 } from '@/lib/queue-store';
-import { getRoleLabel, getRoleLane, readStationRole, type StationRole } from '@/lib/station-role';
+import {
+  getRoleLabel,
+  getRoleLane,
+  readStaffProfile,
+  readStationRole,
+  type StationRole,
+} from '@/lib/station-role';
 
 function QueueMeta({ item }: { item: QueueEntry }) {
   return (
@@ -68,11 +75,14 @@ function getEntryActionLabel(lane?: QueueLane | null) {
 }
 
 export default function QueueManagementPage() {
+  const router = useRouter();
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [stationRole, setStationRole] = useState<StationRole | null>(null);
+  const [staffProfileId, setStaffProfileId] = useState<string | null>(null);
 
   useEffect(() => {
     setStationRole(readStationRole());
+    setStaffProfileId(readStaffProfile()?.id ?? null);
     let isMounted = true;
 
     const syncQueue = async () => {
@@ -138,18 +148,38 @@ export default function QueueManagementPage() {
   const visibleServiceLanes = roleLane ? serviceLanes.filter((lane) => lane === roleLane) : serviceLanes;
 
   const getLaneWaiting = (lane: QueueLane) =>
-    queue.filter((item) => item.currentLane === lane && item.status === 'waiting');
+    queue.filter(
+      (item) =>
+        item.currentLane === lane &&
+        item.status === 'waiting' &&
+        (lane !== 'DOCTOR' ||
+          !staffProfileId ||
+          stationRole !== 'doctor' ||
+          item.assignedDoctorId === staffProfileId)
+    );
 
   const getLaneServing = (lane: QueueLane) =>
-    queue.filter((item) => item.currentLane === lane && item.status === 'serving');
+    queue.filter(
+      (item) =>
+        item.currentLane === lane &&
+        item.status === 'serving' &&
+        (lane !== 'DOCTOR' ||
+          !staffProfileId ||
+          stationRole !== 'doctor' ||
+          item.assignedDoctorId === staffProfileId)
+    );
 
   const handleAcceptNext = async (lane: QueueLane) => {
     if (lane === 'GENERAL') {
       return;
     }
 
-    const nextQueue = await postQueueAction({ action: 'accept_next', lane });
-    setQueue(nextQueue);
+      const nextQueue = await postQueueAction({
+        action: 'accept_next',
+        lane,
+        actorStaffId: lane === 'DOCTOR' ? staffProfileId ?? undefined : undefined,
+      });
+      setQueue(nextQueue);
   };
 
   const handleCallNext = async (lane: QueueLane) => {
@@ -157,8 +187,16 @@ export default function QueueManagementPage() {
       return;
     }
 
-    const nextQueue = await postQueueAction({ action: 'call_next', lane });
-    setQueue(nextQueue);
+    const payload = await postQueueActionWithContext({
+      action: 'call_next',
+      lane,
+      actorStaffId: lane === 'DOCTOR' ? staffProfileId ?? undefined : undefined,
+    });
+    setQueue(payload.queue);
+
+    if (payload.activatedQueueId) {
+      router.push(getQueueWorkflowPath(payload.activatedQueueId, lane));
+    }
   };
 
   const handleFinishStep = async (queueId: string) => {
@@ -166,7 +204,7 @@ export default function QueueManagementPage() {
     setQueue(nextQueue);
   };
 
-  const handleAddReferral = async (queueId: string, lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY') => {
+  const handleAddReferral = async (queueId: string, lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG') => {
     const nextQueue = await postQueueAction({ action: 'add_referral', queueId, lane });
     setQueue(nextQueue);
   };
@@ -247,10 +285,15 @@ export default function QueueManagementPage() {
                           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
                             Now Serving
                           </p>
-                          <p className="mt-3 text-5xl font-black tracking-tight text-primary">
+              <p className="mt-3 text-5xl font-black tracking-tight text-primary">
                             {item.queueNumber}
                           </p>
                           <p className="mt-3 text-xl font-semibold">{item.patientName}</p>
+                          {lane === 'DOCTOR' && item.assignedDoctorName && (
+                            <p className="mt-2 text-sm font-medium text-primary">
+                              Assigned Doctor: {item.assignedDoctorName}
+                            </p>
+                          )}
                           <QueueMeta item={item} />
                           <Link
                             href={getEntryActionPath(item, lane)}
@@ -283,6 +326,13 @@ export default function QueueManagementPage() {
                                 onClick={() => void handleAddReferral(item.id, 'XRAY')}
                               >
                                 Add Xray
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleAddReferral(item.id, 'ECG')}
+                              >
+                                Add ECG
                               </Button>
                             </>
                           )}
@@ -333,6 +383,11 @@ export default function QueueManagementPage() {
                           <div>
                             <p className="text-lg font-semibold">{item.queueNumber}</p>
                             <p className="mt-1 font-medium">{item.patientName}</p>
+                            {lane === 'DOCTOR' && item.assignedDoctorName && (
+                              <p className="mt-1 text-xs font-medium text-primary">
+                                Assigned Doctor: {item.assignedDoctorName}
+                              </p>
+                            )}
                             <QueueMeta item={item} />
                           </div>
                           <span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">
@@ -456,6 +511,11 @@ export default function QueueManagementPage() {
                             <p className="text-sm text-muted-foreground">
                               {item.serviceType} | Next: {item.pendingLanes[0] ?? 'Done'}
                             </p>
+                            {item.assignedDoctorName && (
+                              <p className="mt-1 text-xs text-primary">
+                                Assigned Doctor: {item.assignedDoctorName}
+                              </p>
+                            )}
                             <Link
                               href={getEntryActionPath(item)}
                               className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
@@ -530,6 +590,11 @@ export default function QueueManagementPage() {
                                   <div>
                                     <p className="text-3xl font-bold text-primary">{item.queueNumber}</p>
                                     <p className="mt-1 text-lg font-medium">{item.patientName}</p>
+                                    {lane === 'DOCTOR' && item.assignedDoctorName && (
+                                      <p className="mt-1 text-xs font-medium text-primary">
+                                        Assigned Doctor: {item.assignedDoctorName}
+                                      </p>
+                                    )}
                                     <QueueMeta item={item} />
                                     <Link
                                       href={getEntryActionPath(item, lane)}
@@ -562,6 +627,13 @@ export default function QueueManagementPage() {
                                           onClick={() => void handleAddReferral(item.id, 'XRAY')}
                                         >
                                           Add Xray
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void handleAddReferral(item.id, 'ECG')}
+                                        >
+                                          Add ECG
                                         </Button>
                                       </>
                                     )}
@@ -597,6 +669,11 @@ export default function QueueManagementPage() {
                               waiting.map((item) => (
                                 <div key={item.id} className="rounded-xl bg-muted/50 p-4">
                                   <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
+                                  {lane === 'DOCTOR' && item.assignedDoctorName && (
+                                    <p className="mt-1 text-xs font-medium text-primary">
+                                      Assigned Doctor: {item.assignedDoctorName}
+                                    </p>
+                                  )}
                                   <QueueMeta item={item} />
                                   <Link
                                     href={getEntryActionPath(item, lane)}

@@ -1,4 +1,5 @@
 import { QueueEntry, QueueLane } from '@/lib/queue-store';
+import { sanitizeAllowedModules, type StaffModulePath } from '@/lib/staff-modules';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export type StationRole =
@@ -8,6 +9,8 @@ export type StationRole =
   | 'drug-test'
   | 'doctor'
   | 'xray'
+  | 'ecg'
+  | 'encoder'
   | 'cashier';
 
 export const stationRoles: StationRole[] = [
@@ -17,6 +20,8 @@ export const stationRoles: StationRole[] = [
   'drug-test',
   'doctor',
   'xray',
+  'ecg',
+  'encoder',
   'cashier',
 ];
 
@@ -28,6 +33,7 @@ export interface StaffProfileSession {
   email: string;
   fullName: string;
   role: StationRole;
+  allowedModules: StaffModulePath[];
 }
 
 export function getRoleLabel(role: StationRole) {
@@ -44,6 +50,10 @@ export function getRoleLabel(role: StationRole) {
       return 'Doctor Station';
     case 'xray':
       return 'Xray Station';
+    case 'ecg':
+      return 'ECG Station';
+    case 'encoder':
+      return 'Encoder';
     case 'cashier':
       return 'Cashier / Front Desk';
     default:
@@ -123,6 +133,10 @@ export function mapDbRoleToStationRole(role: string): StationRole | null {
       return 'doctor';
     case 'xray':
       return 'xray';
+    case 'ecg':
+      return 'ecg';
+    case 'encoder':
+      return 'encoder';
     case 'cashier':
       return 'cashier';
     default:
@@ -148,7 +162,7 @@ export async function syncStaffSessionFromSupabase() {
 
   const { data, error } = await supabase
     .from('staff_profiles')
-    .select('id, email, full_name, role')
+    .select('id, email, full_name, role, is_active, allowed_modules')
     .eq('id', session.user.id)
     .single();
 
@@ -164,12 +178,18 @@ export async function syncStaffSessionFromSupabase() {
     throw new Error('Your account role is not allowed in this app.');
   }
 
+  if (!data.is_active) {
+    clearStationRole();
+    throw new Error('Your staff account is pending admin activation.');
+  }
+
   writeStationRole(stationRole);
   writeStaffProfile({
     id: String(data.id),
     email: String(data.email ?? session.user.email ?? ''),
     fullName: String(data.full_name ?? ''),
     role: stationRole,
+    allowedModules: sanitizeAllowedModules(data.allowed_modules),
   });
 
   return {
@@ -177,6 +197,7 @@ export async function syncStaffSessionFromSupabase() {
     email: String(data.email ?? session.user.email ?? ''),
     fullName: String(data.full_name ?? ''),
     role: stationRole,
+    allowedModules: sanitizeAllowedModules(data.allowed_modules),
   } satisfies StaffProfileSession;
 }
 
@@ -190,6 +211,8 @@ export function getRoleLane(role: StationRole): QueueLane | null {
       return 'DOCTOR';
     case 'xray':
       return 'XRAY';
+    case 'ecg':
+      return 'ECG';
     default:
       return null;
   }
@@ -204,7 +227,10 @@ export function getRoleHomePath(role: StationRole) {
     case 'blood-test':
     case 'drug-test':
     case 'xray':
+    case 'ecg':
       return '/staff/lab-orders';
+    case 'encoder':
+      return '/staff/result-release';
     case 'doctor':
       return '/staff/result-encoding';
     case 'cashier':
@@ -225,6 +251,10 @@ export function resolveScanRedirect(role: StationRole, entry: QueueEntry) {
 
   if (role === 'cashier') {
     return `/staff/cashier?queueId=${entry.id}`;
+  }
+
+  if (role === 'encoder') {
+    return `/staff/result-release?queueId=${entry.id}`;
   }
 
   const lane = getRoleLane(role);

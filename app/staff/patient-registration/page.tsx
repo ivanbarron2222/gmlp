@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Printer } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,7 +37,14 @@ const defaultFormData = {
   province: '',
   serviceNeeded: 'Check-Up',
   requestedLabService: '',
+  assignedDoctorId: '',
   notes: '',
+};
+
+type DoctorOption = {
+  id: string;
+  fullName: string;
+  email: string;
 };
 
 export default function PatientRegistrationPage() {
@@ -49,6 +56,10 @@ export default function PatientRegistrationPage() {
   const [verificationMessage, setVerificationMessage] = useState('');
   const [pageError, setPageError] = useState('');
   const [queuedEntry, setQueuedEntry] = useState<QueueEntry | null>(null);
+  const [queuedLabNumbers, setQueuedLabNumbers] = useState<string[]>([]);
+  const [doctors, setDoctors] = useState<DoctorOption[]>([]);
+  const [preferredDoctorId, setPreferredDoctorId] = useState<string | null>(null);
+  const [preferredDoctorName, setPreferredDoctorName] = useState<string | null>(null);
   const [formData, setFormData] = useState(defaultFormData);
 
   useEffect(() => {
@@ -60,6 +71,81 @@ export default function PatientRegistrationPage() {
         )
       );
   }, []);
+
+  const requiresDoctorAssignment = formData.serviceNeeded === 'Check-Up';
+
+  useEffect(() => {
+    if (!requiresDoctorAssignment) {
+      setDoctors([]);
+      setPreferredDoctorId(null);
+      setPreferredDoctorName(null);
+      setFormData((current) =>
+        current.assignedDoctorId ? { ...current, assignedDoctorId: '' } : current
+      );
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadDoctors = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (formData.firstName) params.set('firstName', formData.firstName);
+        if (formData.lastName) params.set('lastName', formData.lastName);
+        if (formData.birthDate) params.set('birthDate', formData.birthDate);
+        if (formData.contactNumber) params.set('contactNumber', formData.contactNumber);
+
+        const response = await fetch(`/api/staff/doctors?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        const payload = (await response.json()) as {
+          doctors?: DoctorOption[];
+          preferredDoctorId?: string | null;
+          preferredDoctorName?: string | null;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Unable to load doctors.');
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        setDoctors(payload.doctors ?? []);
+        setPreferredDoctorId(payload.preferredDoctorId ?? null);
+        setPreferredDoctorName(payload.preferredDoctorName ?? null);
+
+        if (payload.preferredDoctorId) {
+          setFormData((current) =>
+            current.assignedDoctorId ? current : { ...current, assignedDoctorId: payload.preferredDoctorId ?? '' }
+          );
+        }
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setDoctors([]);
+        setPreferredDoctorId(null);
+        setPreferredDoctorName(null);
+        setPageError(error instanceof Error ? error.message : 'Unable to load doctors.');
+      }
+    };
+
+    void loadDoctors();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    requiresDoctorAssignment,
+    formData.firstName,
+    formData.lastName,
+    formData.birthDate,
+    formData.contactNumber,
+  ]);
 
   const selectedRegistration = useMemo(
     () => pendingRegistrations.find((item) => item.id === selectedRegistrationId) ?? null,
@@ -91,6 +177,7 @@ export default function PatientRegistrationPage() {
     setSelectedRegistrationId(null);
     setVerificationMessage('');
     setQueuedEntry(null);
+    setQueuedLabNumbers([]);
     setIsFormOpen(false);
     setPageError('');
   };
@@ -119,6 +206,7 @@ export default function PatientRegistrationPage() {
       serviceNeeded: registration.serviceNeeded,
       requestedLabService: registration.requestedLabService,
       notes: registration.notes,
+      assignedDoctorId: '',
     });
     setVerificationMessage('');
     setIsFormOpen(true);
@@ -163,6 +251,7 @@ export default function PatientRegistrationPage() {
           notes: string;
         };
         queueEntry: QueueEntry;
+        labNumbers: string[];
       };
 
       createPatientVisitRecord(
@@ -189,6 +278,7 @@ export default function PatientRegistrationPage() {
       setPendingRegistrations(registrations);
       setVerificationMessage(`${fullName} has been verified and added to the queue.`);
       setQueuedEntry(payload.queueEntry);
+      setQueuedLabNumbers(payload.labNumbers ?? []);
       setSelectedRegistrationId(null);
       setFormData(defaultFormData);
       setIsFormOpen(false);
@@ -197,6 +287,102 @@ export default function PatientRegistrationPage() {
         error instanceof Error ? error.message : 'Unable to verify and queue patient.'
       );
     }
+  };
+
+  const handlePrintSlip = () => {
+    if (!queuedEntry || typeof window === 'undefined') {
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=420,height=720');
+
+    if (!printWindow) {
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Queue Slip ${queuedEntry.queueNumber}</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 24px;
+              font-family: Arial, sans-serif;
+              background: #ffffff;
+              color: #0f172a;
+            }
+            .slip {
+              border: 1px solid #cbd5e1;
+              border-radius: 18px;
+              padding: 24px;
+              max-width: 340px;
+              margin: 0 auto;
+              text-align: center;
+            }
+            .brand {
+              font-size: 11px;
+              font-weight: 700;
+              letter-spacing: 0.22em;
+              text-transform: uppercase;
+              color: #0b65b1;
+            }
+            .title {
+              margin-top: 10px;
+              font-size: 24px;
+              font-weight: 700;
+            }
+            .queue {
+              margin-top: 10px;
+              font-size: 52px;
+              font-weight: 900;
+              color: #0b65b1;
+              line-height: 1;
+            }
+            .meta {
+              margin-top: 16px;
+              font-size: 14px;
+              line-height: 1.6;
+              color: #475569;
+            }
+            .meta strong {
+              color: #0f172a;
+            }
+            .note {
+              margin-top: 14px;
+              font-size: 12px;
+              color: #64748b;
+            }
+            @page {
+              size: auto;
+              margin: 12mm;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="slip">
+            <div class="brand">Globalife Medical Laboratory &amp; Polyclinic</div>
+            <div class="title">Queue Slip</div>
+            <div class="queue">${queuedEntry.queueNumber}</div>
+            <div class="meta">
+              <div><strong>${queuedEntry.patientName}</strong></div>
+              <div>${queuedLabNumbers.length > 0 ? `Lab No: ${queuedLabNumbers.join(', ')}` : 'Lab No: N/A'}</div>
+              <div>${queuedEntry.serviceType}${queuedEntry.requestedLabLane ? ` - ${queuedEntry.requestedLabLane}` : ''}</div>
+              <div>${new Date(queuedEntry.createdAt).toLocaleString()}</div>
+            </div>
+            <div class="note">Present this queue number at the assigned station for staff processing.</div>
+          </div>
+          <script>
+            window.onload = function () {
+              window.print();
+              window.onafterprint = function () { window.close(); };
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   return (
@@ -381,9 +567,21 @@ export default function PatientRegistrationPage() {
                     Service:{' '}
                     <span className="font-medium text-foreground">{queuedEntry.serviceType}</span>
                   </p>
+                  {queuedEntry.assignedDoctorName && (
+                    <p>
+                      Assigned Doctor:{' '}
+                      <span className="font-medium text-foreground">{queuedEntry.assignedDoctorName}</span>
+                    </p>
+                  )}
                   <p>
                     Intake Lane:{' '}
                     <span className="font-medium text-foreground">{queuedEntry.counter}</span>
+                  </p>
+                  <p>
+                    Lab Number:{' '}
+                    <span className="font-medium text-foreground">
+                      {queuedLabNumbers.length > 0 ? queuedLabNumbers.join(', ') : 'N/A'}
+                    </span>
                   </p>
                   <p>
                     Created:{' '}
@@ -405,11 +603,21 @@ export default function PatientRegistrationPage() {
 
               <div className="w-full max-w-xs rounded-2xl border bg-white p-5 shadow-md">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Next step
+                  Queue Slip
                 </p>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Queue slip printing now starts from cashier after the visit reaches billing.
-                </p>
+                <div className="mt-3 rounded-xl border border-dashed border-primary/30 bg-primary/5 px-4 py-5 text-center">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Queue No.
+                  </p>
+                  <p className="mt-2 text-4xl font-bold text-primary">{queuedEntry.queueNumber}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {queuedLabNumbers.length > 0 ? `Lab No: ${queuedLabNumbers.join(', ')}` : 'Lab No: N/A'}
+                  </p>
+                </div>
+                <Button className="mt-4 w-full gap-2" onClick={handlePrintSlip}>
+                  <Printer className="h-4 w-4" />
+                  Print Queue Slip
+                </Button>
               </div>
             </div>
           </Card>
@@ -581,7 +789,34 @@ export default function PatientRegistrationPage() {
                           <option value="Blood Test">Blood Test</option>
                           <option value="Drug Test">Drug Test</option>
                           <option value="Xray">Xray</option>
+                          <option value="ECG">ECG</option>
                         </select>
+                      </div>
+                    )}
+
+                    {requiresDoctorAssignment && (
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                          ASSIGNED DOCTOR
+                        </label>
+                        <select
+                          name="assignedDoctorId"
+                          value={formData.assignedDoctorId}
+                          onChange={handleInputChange}
+                          className="h-11 w-full rounded-lg border border-border bg-muted px-3 text-foreground"
+                        >
+                          <option value="">Select a doctor</option>
+                          {doctors.map((doctor) => (
+                            <option key={doctor.id} value={doctor.id}>
+                              {doctor.fullName}
+                            </option>
+                          ))}
+                        </select>
+                        {preferredDoctorId && preferredDoctorName && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Suggested based on previous doctor visit: {preferredDoctorName}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>

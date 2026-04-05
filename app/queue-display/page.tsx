@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchQueueEntries } from '@/lib/queue-api';
 import { DisplayLane, QueueEntry } from '@/lib/queue-store';
 
-const rightLanes: DisplayLane[] = ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY'];
+const rightLanes: DisplayLane[] = ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
 
 function formatClock(date: Date) {
   return new Intl.DateTimeFormat('en-PH', {

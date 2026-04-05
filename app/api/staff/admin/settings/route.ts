@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdminStaffAccess } from '@/lib/supabase/admin-auth';
+import { getDefaultAllowedModules, sanitizeAllowedModules } from '@/lib/staff-modules';
+import { mapDbRoleToStationRole } from '@/lib/station-role';
 
 type StaffRoleDb =
   | 'admin'
@@ -8,6 +10,8 @@ type StaffRoleDb =
   | 'drug_test'
   | 'doctor'
   | 'xray'
+  | 'ecg'
+  | 'encoder'
   | 'cashier'
   | 'pathologist';
 
@@ -17,6 +21,7 @@ function toAssignedLane(role: StaffRoleDb) {
     case 'drug_test':
     case 'doctor':
     case 'xray':
+    case 'ecg':
       return role;
     default:
       return null;
@@ -39,7 +44,7 @@ export async function GET(request: Request) {
         .order('company_name', { ascending: true }),
       supabase
         .from('staff_profiles')
-        .select('id, email, full_name, role, assigned_lane, is_active, updated_at')
+        .select('id, email, full_name, role, assigned_lane, is_active, updated_at, allowed_modules')
         .order('full_name', { ascending: true }),
     ]);
 
@@ -96,6 +101,9 @@ export async function POST(request: Request) {
             full_name: string;
             role: StaffRoleDb;
             is_active?: boolean;
+            allowed_modules?: string[];
+            assigned_lane?: string | null;
+            id?: string;
           };
         };
 
@@ -152,8 +160,33 @@ export async function POST(request: Request) {
 
     if (body.kind === 'staff') {
       const staff = body.staff;
-      if (!staff?.email || !staff.password || !staff.full_name || !staff.role) {
+      if (!staff?.role || !staff.full_name || (!staff.id && (!staff.email || !staff.password))) {
         return NextResponse.json({ error: 'Missing staff account fields.' }, { status: 400 });
+      }
+
+      const stationRole = mapDbRoleToStationRole(staff.role);
+      const defaultModules = stationRole ? getDefaultAllowedModules(stationRole) : [];
+      const allowedModules = sanitizeAllowedModules(staff.allowed_modules ?? defaultModules);
+
+      if (staff.id) {
+        const { data: profile, error: profileError } = await supabase
+          .from('staff_profiles')
+          .update({
+            full_name: staff.full_name.trim(),
+            role: staff.role,
+            assigned_lane: staff.assigned_lane ?? toAssignedLane(staff.role),
+            is_active: staff.is_active ?? true,
+            allowed_modules: allowedModules,
+          })
+          .eq('id', staff.id)
+          .select()
+          .single();
+
+        if (profileError) {
+          throw new Error(profileError.message);
+        }
+
+        return NextResponse.json({ staff: profile });
       }
 
       const { data: createdUser, error: createUserError } = await supabase.auth.admin.createUser({
@@ -173,8 +206,9 @@ export async function POST(request: Request) {
           email: staff.email.trim(),
           full_name: staff.full_name.trim(),
           role: staff.role,
-          assigned_lane: toAssignedLane(staff.role),
+          assigned_lane: staff.assigned_lane ?? toAssignedLane(staff.role),
           is_active: staff.is_active ?? true,
+          allowed_modules: allowedModules,
         })
         .select()
         .single();

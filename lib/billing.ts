@@ -28,6 +28,7 @@ export const billingCatalog: CatalogService[] = [
   { id: 'svc-blood-test', name: 'Blood Test Service', amount: 250, category: 'Laboratory' },
   { id: 'svc-drug-test', name: 'Drug Test Service', amount: 350, category: 'Laboratory' },
   { id: 'svc-xray', name: 'Xray Service', amount: 650, category: 'Imaging' },
+  { id: 'svc-ecg', name: 'ECG Service', amount: 450, category: 'Diagnostics' },
 ];
 
 export const paymentMethods: BillingPaymentMethod[] = ['Cash', 'Card', 'HMO', 'E-Wallet'];
@@ -53,6 +54,8 @@ export function buildDefaultLineItems(
             return catalog.find((item) => item.id === 'svc-drug-test');
           case 'XRAY':
             return catalog.find((item) => item.id === 'svc-xray');
+          case 'ECG':
+            return catalog.find((item) => item.id === 'svc-ecg');
           default:
             return null;
         }
@@ -69,6 +72,8 @@ export function buildDefaultLineItems(
       return catalog.filter((item) => item.id === 'svc-drug-test');
     case 'Xray':
       return catalog.filter((item) => item.id === 'svc-xray');
+    case 'ECG':
+      return catalog.filter((item) => item.id === 'svc-ecg');
     default:
       return [];
   }

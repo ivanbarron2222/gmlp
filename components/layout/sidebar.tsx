@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
+  History,
   UserPlus,
   FileText,
   ShoppingCart,
@@ -24,6 +25,7 @@ import {
   syncStaffSessionFromSupabase,
   type StationRole,
 } from '@/lib/station-role';
+import { getDefaultAllowedModules } from '@/lib/staff-modules';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +34,11 @@ const navItems = [
     label: 'Dashboard',
     href: '/dashboard',
     icon: LayoutDashboard,
+  },
+  {
+    label: 'Activity Log',
+    href: '/staff/activity-log',
+    icon: History,
   },
   {
     label: 'Patient Registration',
@@ -85,6 +92,7 @@ export function Sidebar() {
   const router = useRouter();
   const [stationRole, setStationRole] = useState<StationRole | null>(null);
   const [staffName, setStaffName] = useState('');
+  const [allowedModules, setAllowedModules] = useState<string[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
@@ -92,6 +100,7 @@ export function Sidebar() {
     const storedProfile = readStaffProfile();
     setStationRole(storedRole);
     setStaffName(storedProfile?.fullName ?? '');
+    setAllowedModules(storedProfile?.allowedModules ?? []);
     setIsHydrated(true);
 
     syncStaffSessionFromSupabase()
@@ -99,6 +108,7 @@ export function Sidebar() {
         if (profile) {
           setStationRole(profile.role);
           setStaffName(profile.fullName);
+          setAllowedModules(profile.allowedModules ?? []);
         }
       })
       .catch(() => {
@@ -115,38 +125,14 @@ export function Sidebar() {
       return navItems;
     }
 
-    switch (stationRole) {
-      case 'admin':
-        return navItems;
-      case 'nurse':
-        return navItems.filter((item) =>
-          ['/dashboard', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'].includes(item.href)
-        );
-      case 'blood-test':
-      case 'drug-test':
-      case 'xray':
-        return navItems.filter((item) =>
-          ['/dashboard', '/staff/queue', '/staff/lab-orders'].includes(item.href)
-        );
-      case 'doctor':
-        return navItems.filter((item) =>
-          ['/dashboard', '/staff/queue', '/staff/result-encoding', '/staff/patient-records'].includes(item.href)
-        );
-      case 'cashier':
-        return navItems.filter((item) =>
-          [
-            '/dashboard',
-            '/staff/patient-registration',
-            '/staff/queue',
-            '/staff/cashier',
-            '/staff/patient-records',
-            '/staff/result-release',
-          ].includes(item.href)
-        );
-      default:
-        return navItems;
-    }
-  }, [isHydrated, stationRole]);
+    const baseAllowed = new Set(getDefaultAllowedModules(stationRole));
+    const effectiveAllowed =
+      allowedModules.length > 0
+        ? allowedModules.filter((href) => baseAllowed.has(href as never))
+        : Array.from(baseAllowed);
+
+    return navItems.filter((item) => effectiveAllowed.includes(item.href));
+  }, [allowedModules, isHydrated, stationRole]);
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -154,6 +140,7 @@ export function Sidebar() {
     clearStationRole();
     setStationRole(null);
     setStaffName('');
+    setAllowedModules([]);
     router.push('/login');
   };
 

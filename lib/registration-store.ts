@@ -3,7 +3,7 @@
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export type RegistrationService = 'Pre-Employment' | 'Check-Up' | 'Lab';
-export type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray';
+export type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG';
 
 export interface PendingRegistration {
   id: string;
@@ -71,6 +71,8 @@ function mapDbRegistration(row: Record<string, unknown>): PendingRegistration {
           ? 'Drug Test'
           : row.requested_lab_service === 'xray'
             ? 'Xray'
+            : row.requested_lab_service === 'ecg'
+              ? 'ECG'
             : '',
     notes: String(row.notes ?? ''),
   };
@@ -95,6 +97,8 @@ function toDbLabService(service: RequestedLabService | '') {
       return 'drug_test';
     case 'Xray':
       return 'xray';
+    case 'ECG':
+      return 'ecg';
     default:
       return null;
   }

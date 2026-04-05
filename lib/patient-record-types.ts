@@ -13,7 +13,7 @@ export interface MachineResultItem {
 
 export interface MachineResultImport {
   id: string;
-  lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY';
+  lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG';
   importedAt: string;
   orderId: string;
   patientName: string;

@@ -12,8 +12,8 @@ type QueueCashierRow = {
   id: string;
   queue_number: string;
   service_type: 'pre_employment' | 'check_up' | 'lab';
-  requested_lab_service: 'blood_test' | 'drug_test' | 'xray' | null;
-  current_lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray';
+  requested_lab_service: 'blood_test' | 'drug_test' | 'xray' | 'ecg' | null;
+  current_lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray' | 'ecg';
   queue_status: 'waiting' | 'now_serving' | 'completed' | 'cancelled' | 'skipped';
   counter_name: string | null;
   priority_lane: boolean;
@@ -41,7 +41,7 @@ type QueueCashierRow = {
   queue_steps:
     | Array<{
         id: string;
-        lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray';
+        lane: 'general' | 'priority_lane' | 'blood_test' | 'drug_test' | 'doctor' | 'xray' | 'ecg';
         status: 'pending' | 'serving' | 'completed' | 'skipped' | 'cancelled';
         sort_order: number;
       }>
@@ -206,6 +206,8 @@ export async function GET(request: Request) {
               ? 'Drug Test'
               : queue.requested_lab_service === 'xray'
                 ? 'Xray'
+                : queue.requested_lab_service === 'ecg'
+                  ? 'ECG'
                 : '',
         completedLanes,
         visitStatus:
@@ -226,6 +228,8 @@ export async function GET(request: Request) {
               ? 'Drug Test'
               : queue.requested_lab_service === 'xray'
                 ? 'Xray'
+                : queue.requested_lab_service === 'ecg'
+                  ? 'ECG'
                 : '',
           completedLanes
         ),
