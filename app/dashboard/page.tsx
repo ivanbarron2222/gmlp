@@ -46,6 +46,7 @@ type DashboardPayload = {
   revenueTrend: Array<{ date: string; label: string; amount: number }>;
   recentPatients: Array<{
     id: string;
+    patientCode: string;
     name: string;
     requestTime: string;
     status: 'pending' | 'processing' | 'released';
@@ -294,7 +295,10 @@ export default function DashboardPage() {
                       paddingAngle={3}
                     >
                       {dashboard.serviceBreakdown.map((entry, index) => (
-                        <Cell key={entry.service} fill={serviceColors[index % serviceColors.length]} />
+                        <Cell
+                          key={`${entry.service}-${index}`}
+                          fill={serviceColors[index % serviceColors.length]}
+                        />
                       ))}
                     </Pie>
                     <Tooltip
@@ -308,7 +312,7 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
                 <div className="mt-4 flex flex-wrap gap-4">
                   {dashboard.serviceBreakdown.map((entry, index) => (
-                    <div key={entry.service} className="flex items-center gap-2 text-sm">
+                    <div key={`${entry.service}-${index}`} className="flex items-center gap-2 text-sm">
                       <span
                         className="h-2.5 w-2.5 rounded-full"
                         style={{ backgroundColor: serviceColors[index % serviceColors.length] }}
@@ -381,15 +385,15 @@ export default function DashboardPage() {
                   </thead>
                   <tbody>
                     {dashboard.recentPatients.length > 0 ? (
-                      dashboard.recentPatients.map((patient) => (
+                      dashboard.recentPatients.map((patient, index) => (
                         <tr
-                          key={`${patient.id}-${patient.queueNumber}`}
+                          key={`${patient.id}-${patient.queueNumber}-${index}`}
                           className="border-b border-border hover:bg-muted/40"
                         >
                           <td className="py-4">
                             <div>
                               <p className="font-medium">{patient.name}</p>
-                              <p className="text-xs text-muted-foreground">ID: {patient.id}</p>
+                              <p className="text-xs text-muted-foreground">ID: {patient.patientCode}</p>
                             </div>
                           </td>
                           <td className="py-4 font-medium">{patient.queueNumber}</td>
@@ -425,7 +429,10 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 {dashboard.liveQueue.length > 0 ? (
                   dashboard.liveQueue.map((item, index) => (
-                    <div key={item.id} className="flex items-center gap-4 rounded-xl bg-muted/40 p-3">
+                    <div
+                      key={`${item.id}-${item.queueNumber}-${index}`}
+                      className="flex items-center gap-4 rounded-xl bg-muted/40 p-3"
+                    >
                       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                         {index + 1}
                       </div>
@@ -453,9 +460,9 @@ export default function DashboardPage() {
               <h2 className="mb-6 text-lg font-bold">Pending Validations</h2>
               <div className="space-y-3">
                 {dashboard.pendingValidations.length > 0 ? (
-                  dashboard.pendingValidations.map((item) => (
+                  dashboard.pendingValidations.map((item, index) => (
                     <div
-                      key={item.id}
+                      key={`${item.id}-${index}`}
                       className={`rounded-lg border-l-4 p-4 ${
                         item.priority === 'urgent'
                           ? 'border-orange-300 bg-orange-50'

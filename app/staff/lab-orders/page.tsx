@@ -18,6 +18,17 @@ import { parseMachineResultText, type ParsedMachineResult } from '@/lib/machine-
 
 type LabLane = Extract<QueueLane, 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG'>;
 type BloodTestCategory = 'hematology' | 'urinalysis';
+type XrayReport = {
+  id: string;
+  importedAt: string;
+  orderId: string;
+  examType: string;
+  xrayNumber: string;
+  findings: string[];
+  impression: string;
+  remarks: string;
+  rawText: string;
+};
 
 const supportedLanes: LabLane[] = ['BLOOD TEST', 'DRUG TEST', 'XRAY', 'ECG'];
 
@@ -38,6 +49,12 @@ function LabOrdersPageContent() {
   const [savedImportFromDb, setSavedImportFromDb] = useState<MachineResultImport | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
   const [bloodTestCategory, setBloodTestCategory] = useState<BloodTestCategory>('hematology');
+  const [savedXrayReport, setSavedXrayReport] = useState<XrayReport | null>(null);
+  const [xrayExamType, setXrayExamType] = useState('Chest PA');
+  const [xrayNumber, setXrayNumber] = useState('');
+  const [xrayFindings, setXrayFindings] = useState('');
+  const [xrayImpression, setXrayImpression] = useState('');
+  const [xrayRemarks, setXrayRemarks] = useState('');
 
   useEffect(() => {
     if (!queueId) {
@@ -73,6 +90,42 @@ function LabOrdersPageContent() {
 
     if (lane === 'ECG') {
       setSavedImportFromDb(null);
+      setSavedXrayReport(null);
+      return () => controller.abort();
+    }
+
+    if (lane === 'XRAY') {
+      setSavedImportFromDb(null);
+
+      fetch(`/api/staff/xray-report?queueId=${encodeURIComponent(queueId)}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(payload?.error ?? 'Unable to load saved xray report.');
+          }
+
+          return (await response.json()) as { xrayReport: XrayReport | null };
+        })
+        .then((payload) => {
+          setSavedXrayReport(payload.xrayReport);
+          if (payload.xrayReport) {
+            setXrayExamType(payload.xrayReport.examType || 'Chest PA');
+            setXrayNumber(payload.xrayReport.xrayNumber || '');
+            setXrayFindings(payload.xrayReport.findings.join('\n'));
+            setXrayImpression(payload.xrayReport.impression || '');
+            setXrayRemarks(payload.xrayReport.remarks || '');
+          }
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            setImportError(error instanceof Error ? error.message : 'Unable to load saved xray report.');
+            setSavedXrayReport(null);
+          }
+        });
+
       return () => controller.abort();
     }
 
@@ -188,6 +241,57 @@ function LabOrdersPageContent() {
     }
   };
 
+  const handleSaveXrayReport = async () => {
+    if (!entry || !queueId) {
+      return;
+    }
+
+    setIsSavingImport(true);
+    setImportError('');
+    setImportMessage('');
+
+    try {
+      const response = await fetch('/api/staff/xray-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          queueId,
+          examType: xrayExamType,
+          xrayNumber,
+          findings: xrayFindings,
+          impression: xrayImpression,
+          remarks: xrayRemarks,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Unable to save xray report.');
+      }
+
+      const payload = (await response.json()) as { xrayReport: XrayReport };
+      setSavedXrayReport(payload.xrayReport);
+      setImportMessage(`Xray report saved to database for ${entry.patientName}.`);
+
+      saveVisitMachineResult(queueId, {
+        id: payload.xrayReport.id,
+        lane: 'XRAY',
+        importedAt: payload.xrayReport.importedAt,
+        orderId: payload.xrayReport.orderId,
+        patientName: entry.patientName,
+        testName: payload.xrayReport.examType,
+        rawText: payload.xrayReport.rawText,
+        results: [],
+      });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Unable to save xray report.');
+    } finally {
+      setIsSavingImport(false);
+    }
+  };
+
   if (!entry) {
     return (
       <PageLayout>
@@ -273,7 +377,144 @@ function LabOrdersPageContent() {
           </Card>
 
           <div className="space-y-6">
-            {lane !== 'ECG' ? (
+            {lane === 'XRAY' ? (
+            <>
+            <Card className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="rounded-full bg-primary/10 p-3 text-primary">
+                  <ScanLine className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Station Actions</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Encode the xray narrative for this patient, then mark the step complete from this station.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-xl border border-border bg-muted/30 p-4 text-sm">
+                <p className="font-semibold">Step Status</p>
+                <p className="mt-1 text-muted-foreground">
+                  {isCompletedHere
+                    ? `${lane} is already completed for this patient.`
+                    : isCurrentLane
+                      ? `Patient is already inside ${lane}. Save the xray findings, then mark the step complete.`
+                      : hasPendingStep
+                        ? `${lane} is still pending, but the patient has not been moved into this station yet. Call the patient from queue management first.`
+                        : `No pending ${lane} step is available for this patient.`}
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button variant="outline" onClick={handleCompleteStep} disabled={!isServingHere}>
+                  Mark Step Complete
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-3">
+                <FileUp className="h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="text-lg font-bold">XRAY Narrative Entry</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Encode the exam type, findings, and impression for this xray study.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Exam Type
+                  </label>
+                  <input
+                    value={xrayExamType}
+                    onChange={(event) => setXrayExamType(event.target.value)}
+                    className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    placeholder="Chest PA"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Xray Number
+                  </label>
+                  <input
+                    value={xrayNumber}
+                    onChange={(event) => setXrayNumber(event.target.value)}
+                    className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    placeholder="XR-9316"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Findings
+                </label>
+                <textarea
+                  value={xrayFindings}
+                  onChange={(event) => setXrayFindings(event.target.value)}
+                  className="min-h-[180px] w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  placeholder={'No definite focal infiltrates.\nHeart is not enlarged.\nAorta is unremarkable.'}
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Impression
+                </label>
+                <textarea
+                  value={xrayImpression}
+                  onChange={(event) => setXrayImpression(event.target.value)}
+                  className="min-h-[96px] w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="Normal chest findings"
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Remarks
+                </label>
+                <textarea
+                  value={xrayRemarks}
+                  onChange={(event) => setXrayRemarks(event.target.value)}
+                  className="min-h-[84px] w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="Optional remarks"
+                />
+              </div>
+
+              <div className="mt-5">
+                <Button onClick={handleSaveXrayReport} disabled={isSavingImport}>
+                  {isSavingImport ? 'Saving...' : 'Save Xray Report'}
+                </Button>
+              </div>
+
+              {savedXrayReport && (
+                <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  <p className="font-semibold">Saved XRAY Report on File</p>
+                  <p className="mt-1">
+                    {savedXrayReport.examType} saved on{' '}
+                    {new Date(savedXrayReport.importedAt).toLocaleString()}
+                    {savedXrayReport.xrayNumber ? ` as ${savedXrayReport.xrayNumber}` : ''}.
+                  </p>
+                </div>
+              )}
+
+              {importError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {importError}
+                </div>
+              )}
+
+              {importMessage && (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  {importMessage}
+                </div>
+              )}
+            </Card>
+            </>
+            ) : lane !== 'ECG' ? (
             <>
             <Card className="p-6">
               <div className="flex items-center gap-3">

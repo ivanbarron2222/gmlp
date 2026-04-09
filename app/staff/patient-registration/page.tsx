@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Printer } from 'lucide-react';
+import { Printer } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,10 +16,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageLayout } from '@/components/layout/page-layout';
-import {
-  fetchPendingRegistrations,
-  PendingRegistration,
-} from '@/lib/registration-store';
+import { fetchPendingRegistrations, PendingRegistration } from '@/lib/registration-store';
 import { createPatientVisitRecord } from '@/lib/patient-records-store';
 import { getQueueVisitPath, QueueEntry } from '@/lib/queue-store';
 
@@ -49,8 +46,6 @@ type DoctorOption = {
 
 export default function PatientRegistrationPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showDuplicateAlert, setShowDuplicateAlert] = useState(false);
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
   const [selectedRegistrationId, setSelectedRegistrationId] = useState<string | null>(null);
   const [verificationMessage, setVerificationMessage] = useState('');
@@ -119,7 +114,9 @@ export default function PatientRegistrationPage() {
 
         if (payload.preferredDoctorId) {
           setFormData((current) =>
-            current.assignedDoctorId ? current : { ...current, assignedDoctorId: payload.preferredDoctorId ?? '' }
+            current.assignedDoctorId
+              ? current
+              : { ...current, assignedDoctorId: payload.preferredDoctorId ?? '' }
           );
         }
       } catch (error) {
@@ -163,17 +160,8 @@ export default function PatientRegistrationPage() {
     }));
   };
 
-  const handleSearch = () => {
-    if (searchQuery.toLowerCase().includes('john')) {
-      setShowDuplicateAlert(true);
-    } else {
-      setShowDuplicateAlert(false);
-    }
-  };
-
   const handleClear = () => {
     setFormData(defaultFormData);
-    setShowDuplicateAlert(false);
     setSelectedRegistrationId(null);
     setVerificationMessage('');
     setQueuedEntry(null);
@@ -388,11 +376,14 @@ export default function PatientRegistrationPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
             <h1 className="text-3xl font-bold">Patient Registration</h1>
             <p className="mt-2 text-muted-foreground">
-            Review self-registrations, verify patient details, and create the active queue record from front desk intake.
+              Review self-registrations, verify patient details, and create the active queue record from front desk intake.
             </p>
+          </div>
+          <Button onClick={handleOpenManualForm}>Open Registration Form</Button>
         </div>
 
         <Card className="mt-8 p-6 shadow-sm">
@@ -411,14 +402,7 @@ export default function PatientRegistrationPage() {
           <div className="mt-6 grid gap-3 xl:grid-cols-2">
             {pendingRegistrations.length > 0 ? (
               pendingRegistrations.map((registration) => (
-                <div
-                  key={registration.id}
-                  className={`rounded-xl border p-4 transition-colors ${
-                    selectedRegistrationId === registration.id
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border bg-background'
-                  }`}
-                >
+                <div key={registration.id} className="rounded-xl border border-border bg-background p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold">
@@ -428,7 +412,7 @@ export default function PatientRegistrationPage() {
                       </p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {registration.serviceNeeded}
-                        {registration.requestedLabService ? ` • ${registration.requestedLabService}` : ''}
+                        {registration.requestedLabService ? ` - ${registration.requestedLabService}` : ''}
                       </p>
                       {registration.company && (
                         <p className="mt-1 text-xs text-muted-foreground">{registration.company}</p>
@@ -444,12 +428,10 @@ export default function PatientRegistrationPage() {
                       Birthdate: <span className="text-foreground">{registration.birthDate}</span>
                     </p>
                     <p>
-                      Contact:{' '}
-                      <span className="text-foreground">{registration.contactNumber}</span>
+                      Contact: <span className="text-foreground">{registration.contactNumber}</span>
                     </p>
                     <p>
-                      Email:{' '}
-                      <span className="text-foreground">{registration.emailAddress}</span>
+                      Email: <span className="text-foreground">{registration.emailAddress}</span>
                     </p>
                     <p>
                       Address:{' '}
@@ -472,79 +454,6 @@ export default function PatientRegistrationPage() {
           </div>
         )}
 
-        {showDuplicateAlert && (
-          <div className="mt-6 flex gap-4 rounded-lg border border-red-200 bg-red-50 p-4">
-            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
-            <div className="flex-1">
-              <h3 className="mb-2 font-semibold text-red-900">Possible Duplicate Detected</h3>
-              <p className="mb-3 text-sm text-red-800">
-                A patient with the name &quot;John D. Miller&quot; and same birthdate was found in
-                the database. Please verify before proceeding.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" className="border-red-200 text-red-600">
-                  View Existing Record
-                </Button>
-                <Button variant="outline" className="border-red-200 text-red-600">
-                  Ignore and Continue
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <Card className="mt-8 p-6 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h2 className="text-lg font-bold">Registration Workspace</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Open the verification form in a modal to review a self-registration or create a manual walk-in entry.
-              </p>
-            </div>
-            <Button onClick={handleOpenManualForm}>Open Registration Form</Button>
-          </div>
-
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Source
-              </p>
-              <p className="mt-2 text-base font-semibold text-foreground">
-                {selectedRegistration ? 'Self-Registration' : 'Manual Nurse Intake'}
-              </p>
-            </div>
-            <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Patient
-              </p>
-              <p className="mt-2 text-base font-semibold text-foreground">
-                {[formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' ') || 'No form loaded'}
-              </p>
-            </div>
-            <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Service
-              </p>
-              <p className="mt-2 text-base font-semibold text-foreground">
-                {formData.serviceNeeded}
-                {formData.serviceNeeded === 'Lab' && formData.requestedLabService
-                  ? ` · ${formData.requestedLabService}`
-                  : ''}
-              </p>
-            </div>
-            <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Status
-              </p>
-              <p className="mt-2 text-base font-semibold text-foreground">
-                {selectedRegistration
-                  ? `Loaded ${new Date(selectedRegistration.submittedAt).toLocaleString()}`
-                  : 'Ready for verification'}
-              </p>
-            </div>
-          </div>
-        </Card>
-
         {verificationMessage && (
           <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
             {verificationMessage}
@@ -559,13 +468,10 @@ export default function PatientRegistrationPage() {
                   Patient Queued
                 </p>
                 <h2 className="mt-3 text-3xl font-bold">{queuedEntry.queueNumber}</h2>
-                <p className="mt-2 text-base font-medium text-foreground">
-                  {queuedEntry.patientName}
-                </p>
+                <p className="mt-2 text-base font-medium text-foreground">{queuedEntry.patientName}</p>
                 <div className="mt-4 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
                   <p>
-                    Service:{' '}
-                    <span className="font-medium text-foreground">{queuedEntry.serviceType}</span>
+                    Service: <span className="font-medium text-foreground">{queuedEntry.serviceType}</span>
                   </p>
                   {queuedEntry.assignedDoctorName && (
                     <p>
@@ -574,8 +480,7 @@ export default function PatientRegistrationPage() {
                     </p>
                   )}
                   <p>
-                    Intake Lane:{' '}
-                    <span className="font-medium text-foreground">{queuedEntry.counter}</span>
+                    Intake Lane: <span className="font-medium text-foreground">{queuedEntry.counter}</span>
                   </p>
                   <p>
                     Lab Number:{' '}
@@ -591,10 +496,7 @@ export default function PatientRegistrationPage() {
                   </p>
                   <p>
                     Visit Link:{' '}
-                    <Link
-                      href={getQueueVisitPath(queuedEntry.id)}
-                      className="font-medium text-primary hover:underline"
-                    >
+                    <Link href={getQueueVisitPath(queuedEntry.id)} className="font-medium text-primary hover:underline">
                       Open patient visit
                     </Link>
                   </p>
@@ -623,43 +525,13 @@ export default function PatientRegistrationPage() {
           </Card>
         )}
 
-        <div className="mt-8 grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <div className="flex items-center gap-3 rounded-lg bg-muted p-4 shadow-sm">
-            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
-            </svg>
-            <div className="text-sm">
-              <p className="font-semibold">Verified Intake</p>
-              <p className="text-xs text-muted-foreground">Self-registration reviewed before queueing</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-lg bg-muted p-4 shadow-sm">
-            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 1C6.48 1 2 5.48 2 11s4.48 10 10 10 10-4.48 10-10S17.52 1 12 1zm-2 15l-5-5 1.41-1.41L10 12.17l7.59-7.59L19 6l-9 9z" />
-            </svg>
-            <div className="text-sm">
-              <p className="font-semibold">Queue Ready</p>
-              <p className="text-xs text-muted-foreground">Verified patients go directly into the active queue</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-lg bg-muted p-4 shadow-sm">
-            <svg className="h-5 w-5 flex-shrink-0 text-accent" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 1C6.48 1 2 5.48 2 11s4.48 10 10 10 10-4.48 10-10S17.52 1 12 1zm-2 15l-5-5 1.41-1.41L10 12.17l7.59-7.59L19 6l-9 9z" />
-            </svg>
-            <div className="text-sm">
-              <p className="font-semibold">Visit Context</p>
-              <p className="text-xs text-muted-foreground">Prepared for slip printing and direct station access from the live queue</p>
-            </div>
-          </div>
-        </div>
-
         <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
           <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto p-0 sm:max-w-6xl">
             <DialogHeader className="border-b px-6 py-5">
               <DialogTitle className="text-2xl">Patient Verification Form</DialogTitle>
               <DialogDescription>
                 {selectedRegistration
-                  ? `Review the submitted /register details, complete any missing fields, then verify and queue the patient.`
+                  ? 'Review the submitted /register details, complete any missing fields, then verify and queue the patient.'
                   : 'Use the front desk intake form to register and queue a walk-in patient.'}
               </DialogDescription>
             </DialogHeader>
@@ -920,24 +792,17 @@ export default function PatientRegistrationPage() {
 
             <DialogFooter className="border-t px-6 py-4">
               <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10">
-                    <svg className="h-4 w-4 text-primary" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-                    </svg>
-                  </div>
-                  <span>
-                    {selectedRegistration
-                      ? `Loaded self-registration from ${new Date(selectedRegistration.submittedAt).toLocaleString()}`
-                      : 'Manual front desk registration and verification'}
-                  </span>
+                <div className="text-xs text-muted-foreground">
+                  {selectedRegistration
+                    ? `Loaded self-registration from ${new Date(selectedRegistration.submittedAt).toLocaleString()}`
+                    : 'Manual front desk registration'}
                 </div>
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={handleClear}>
                     Clear Form
                   </Button>
                   <Button className="px-8" onClick={handleVerifyAndQueue}>
-                    Verify &amp; Queue Patient
+                    Verify & Queue Patient
                   </Button>
                 </div>
               </div>

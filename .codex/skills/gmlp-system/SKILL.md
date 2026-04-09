@@ -15,7 +15,7 @@ Use this skill when working on:
 - the public queue monitor at `/queue-display`
 - result release, soft-copy QR, and PDF delivery
 - Supabase schema, auth, RLS, and data integration
-- admin settings, pricing, partner companies, and staff accounts
+- admin settings, pricing, partner companies, staff accounts, and activity oversight
 
 ## Project Context
 
@@ -31,10 +31,11 @@ Use this skill when working on:
 
 - `/login`: staff login using Supabase auth
 - `/register`: patient self-registration
+- `/staff-signup`: staff self-registration request page
 - `/queue-display`: second-monitor public queue display
 - `/report/[queueId]`: public soft-copy report page for released results
 - `/scan/queue/[id]`: QR scan resolver for active visit/queue context
-- `/staff/patient-registration`: front desk registration and verification
+- `/staff/patient-registration`: front desk / nurse registration and verification
 - `/staff/queue`: staff queue management
 - `/staff/lab-orders`: lab order management and machine upload
 - `/staff/result-encoding`: doctor consultation / referral workflow
@@ -42,6 +43,7 @@ Use this skill when working on:
 - `/staff/patient-records`: patient history and management
 - `/staff/result-release`: result validation, release, PDF, and review flow
 - `/staff/settings`: admin-only settings page
+- `/staff/activity-log`: admin-only activity log
 - `/dashboard`: DB-backed analytics dashboard
 
 ## Roles
@@ -53,6 +55,8 @@ Frontend roles currently mapped in the app:
 - `drug_test`
 - `doctor`
 - `xray`
+- `ecg`
+- `encoder`
 - `cashier`
 
 Frontend station-role mappings use:
@@ -62,14 +66,20 @@ Frontend station-role mappings use:
 - `drug-test`
 - `doctor`
 - `xray`
+- `ecg`
+- `encoder`
 - `cashier`
 
 Role behavior:
-- `admin` can see all modules and the full queue board
+- `admin` can see all modules, the full queue board, admin settings, and activity log
 - `nurse` handles intake, verification, queueing, and full-board operational view
 - `cashier` now behaves as `cashier / front desk`, with access to registration, queue, billing, patient records, and result release
-- `blood-test`, `drug-test`, `doctor`, and `xray` see their assigned workflow screens
+- `blood-test`, `drug-test`, `xray`, and `ecg` see their assigned workflow screens
+- `doctor` sees doctor queue items and consultation flow only for patients assigned to that doctor
+- `encoder` currently focuses on `result release` and `patient records`
 - cashier/front desk now prints the queue slip
+- staff accounts can self-register, but remain inactive until admin activation
+- Pre-Employment patients without an assigned doctor can still be handled from the doctor queue when needed
 
 ## Queue Rules
 
@@ -80,26 +90,35 @@ Role behavior:
 - Public display should prefer queue numbers only and avoid showing patient names
 - `GENERAL` is the intake queue
 - `PRIORITY LANE` is handled before regular `GENERAL` entries when departments accept the next patient
-- Queue lanes in the display and manager are: `GENERAL`, `PRIORITY LANE`, `BLOOD TEST`, `DRUG TEST`, `DOCTOR`, `XRAY`
-- `Pre-Employment` patients must complete `BLOOD TEST`, `DRUG TEST`, `DOCTOR`, and `XRAY`, but they may enter any unfinished station in any available order
-- `Check-Up` patients go to `DOCTOR` first; `BLOOD TEST`, `DRUG TEST`, and `XRAY` are optional referrals added after doctor review
+- Queue lanes in the display and manager are: `GENERAL`, `PRIORITY LANE`, `BLOOD TEST`, `DRUG TEST`, `DOCTOR`, `XRAY`, `ECG`
+- `Pre-Employment` patients must complete `BLOOD TEST`, `DRUG TEST`, `DOCTOR`, `XRAY`, and `ECG`, but they may enter any unfinished station in any available order
+- `Check-Up` patients go to `DOCTOR` first; `BLOOD TEST`, `DRUG TEST`, `XRAY`, and `ECG` are optional referrals added after doctor review
 - `Lab` goes directly to the selected lab lane
 - `/staff/queue` is the control page for intake, department acceptance, and step completion
 - Queue is DB-backed, not localStorage-driven
 - Internal staff flow no longer depends on a printed patient QR; queue and station screens use direct visit/workflow links
+- Call Next now completes the current serving patient for that station, promotes the next patient, and routes into the active workflow page
+- Station queue UI is now Call Next driven; old manual accept/finish controls should stay removed unless explicitly requested
+- Queue display numbers are service-prefixed daily:
+  - `P-###` for `Pre-Employment`
+  - `C-###` for `Check-Up`
+  - `L-###` for `Lab`
 
 ## Registration Notes
 
 - `/register` contains the patient self-registration form
 - The form includes first, middle, and last name; company; birthdate; gender; contact number; email address; street address; city; province; service needed; lab service when needed; and notes
 - `Service Needed` is: `Pre-Employment`, `Check-Up`, `Lab`
-- If `Lab` is selected, `Lab Service` is: `Blood Test`, `Drug Test`, `Xray`
+- If `Lab` is selected, `Lab Service` is: `Blood Test`, `Drug Test`, `Xray`, `ECG`
 - After successful submission, `/register` shows a thank-you screen with `Registration Complete`
 - Do not re-add the removed `Continue to Login` action block unless the user asks
 - `/register` submits to Supabase `self_registrations` through the anon client
 - `/staff/patient-registration` reads real pending registrations from Supabase
 - The patient-registration page no longer has the old pre-registration check card; keep it focused on pending registrations, workspace summary, and verification
-- After verification, the page shows a compact queued-patient summary instead of printing a slip there
+- After verification, the page shows a compact queued-patient summary and queue-slip print action
+- Doctor assignment is only for `Check-Up`
+- Nurse/front desk assigns the doctor for `Check-Up`
+- If the patient has previous doctor history, the previous doctor is suggested automatically
 
 ## Login Notes
 
@@ -109,6 +128,8 @@ Role behavior:
 - Authenticated role comes from `public.staff_profiles`
 - `staff_profiles.id` must match `auth.users.id`
 - Staff layout pages are guarded and redirect unauthenticated users to `/login`
+- Inactive staff profiles must be blocked from login with the pending-activation message
+- `/staff-signup` creates the auth user and inactive `staff_profiles` row, then waits for admin activation
 
 ## Branding
 
@@ -140,6 +161,7 @@ Replace or avoid old branding such as:
 - Use Philippine peso formatting (`?`) for billing/admin pricing and dashboard revenue
 - Keep patient-facing forms readable on mobile first
 - Prefer targeted edits over full rewrites
+- Admin staff management should make pending activations obvious with clear badges and filters
 
 ## Database Notes
 
@@ -147,6 +169,8 @@ Replace or avoid old branding such as:
 - Report review-note migration: `supabase/migrations/20260401_001_report_review_notes.sql`
 - Admin settings migration: `supabase/migrations/20260401_002_admin_settings.sql`
 - Lab-number backfill migration: `supabase/migrations/20260402_001_backfill_lab_numbers.sql`
+- ECG / encoder migration: `supabase/migrations/20260405_001_ecg_encoder_support.sql`
+- Staff allowed-modules migration: `supabase/migrations/20260405_002_staff_allowed_modules.sql`
 - Staff profile seed template: `supabase/seeds/20260331_staff_profiles_template.sql`
 - Environment variables expected by the app:
   - `NEXT_PUBLIC_SUPABASE_URL`
@@ -174,6 +198,8 @@ These are DB-backed now:
 - `/staff/result-release` -> `reports` validate / release / review state
 - public `/report/[queueId]` soft copy access based on release status
 - `/dashboard` -> real Supabase-backed analytics API
+- `/staff/activity-log` -> admin audit timeline sourced from DB activity
+- `/staff/settings` -> pricing, companies, staff accounts, per-user module permissions, and activation state
 
 ## Machine Result Notes
 
@@ -191,6 +217,7 @@ These are DB-backed now:
 
 - `/staff/result-release` now reads real report data from Supabase
 - Release queue stays visible while the selected report preview stays open on the right
+- Release queue now has a search bar
 - `Audit Log` is a real audit timeline sourced from DB activity
 - `Flag for Review` is a real DB action that blocks release and stores review remarks
 - Review remarks are stored in `reports.review_notes`
@@ -209,19 +236,32 @@ These are DB-backed now:
   - `service_catalog` pricing
   - `partner_companies`
   - staff/user account creation through Supabase Auth + `staff_profiles`
+  - per-user `allowed_modules`
+  - staff activation/inactivation
 - Services and partner companies support edit buttons that open popup modals
+- Staff rows support edit modals for module access and activation status
+- Staff section supports filters for `All Staff`, `Pending Activation`, and `Active Only`
 - Cashier now reads service pricing from `service_catalog` through `/api/staff/service-catalog`
 - Partner companies are stored, but patient registration still uses free-text company input for now
+## Cashier Notes
 
-## Current Pending Work
+- /staff/cashier no longer depends on queueId only; it opens with a pending billing list on the left and an active invoice workspace on the right
+- Pending billing patients are loaded from the database by isit_id invoice state, not by a direct queue_entries -> invoices relationship
+- Cashier/front desk can select a pending patient, prepare the bill, process payment, and print an Invoice / Receipt
+- Printed cashier output should function as the proof-of-payment slip for the labs before processing
+- Billing now surfaces:
+  - Invoice Number
+  - Receipt Number when paid
+  - Lab Number
+  - queue number / patient / service context
+- Invoice numbers are generated and stored in invoices.invoice_number
+- Receipt numbers are generated and stored in payments.official_receipt_number
+- Keep the cashier page oriented around:
+  - pending patients list
+  - invoice workspace
+  - payment processing
+  - invoice / receipt printing
 
-Still pending after the latest queue/ECG pass:
-- doctor assignment and preferred-doctor routing for check-up patients
-- admin-managed per-user module permissions
-- activity log
-- patient summary with clear Complete / Pending badge
-- patient-record date-range filter and PDF access
-- result-release queue search bar
 ## Dashboard Notes
 
 - `/dashboard` is now DB-backed and should not use mock dashboard metrics
@@ -236,14 +276,34 @@ Still pending after the latest queue/ECG pass:
   - pending validations panel
 - Prefer readable summaries over dense BI-style dashboards
 
+## Activity Log Notes
+
+- `/staff/activity-log` is admin-only
+- It currently aggregates visible DB-backed events for:
+  - queue creation/completion
+  - machine-result uploads
+  - payment processing
+  - report review / validation / release / email events
+  - admin changes to services and partner companies
+- Keep it as an oversight timeline, not a general staff page
+
 ## Deployment Notes
 
 - App is prepared for Vercel
 - QR generation should use `NEXT_PUBLIC_APP_URL`
 - Printed lab-result QR should point to `/report/[queueId]`
 - Internal patient queue-slip QR is no longer part of the staff flow
-- Queue slip printing now starts from cashier/front desk
+- Queue slip printing now starts from patient registration/front desk
 - `pnpm` is the package manager in current project setup
+
+## Current Pending Work
+
+Still pending after the latest pass:
+- deeper doctor assignment polish if doctor load-balancing rules become more complex
+- richer activity log coverage for more staff/admin actions
+- partner-company dropdown/autocomplete in registration instead of free text
+- specimen tracking module implementation if the route becomes active
+- any future report/permissions refinements requested by the user
 
 ## Working Rules
 

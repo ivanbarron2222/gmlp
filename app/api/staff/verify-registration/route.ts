@@ -37,6 +37,20 @@ function getReadableVerifyError(error: unknown) {
     ) {
       return 'Queue numbering is blocked by the database schema. Run the latest queue migration, then try verifying again.';
     }
+
+    if (
+      maybeError.code === '23514' &&
+      message.includes('lab_order_items_lane_check')
+    ) {
+      return 'The database is still missing ECG lane support. Run the latest ECG migration, then try verifying again.';
+    }
+
+    if (
+      maybeError.code === '22P02' &&
+      (message.includes('queue_lane') || message.includes('lab_service_type') || message.includes('app_role'))
+    ) {
+      return 'The database enums are behind the app. Run the latest ECG/encoder migration, then try again.';
+    }
   }
 
   return error instanceof Error

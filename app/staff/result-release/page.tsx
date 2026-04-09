@@ -103,6 +103,11 @@ const reportTemplateData: LabReportTemplateData = {
       license: '[LICENSE NUMBER]',
     },
   ],
+  xraySignature: {
+    name: '[RADIOLOGIST NAME]',
+    role: '[RADIOLOGIST ROLE]',
+    license: '[LICENSE NUMBER]',
+  },
 };
 
 function ResultReleasePageContent() {
@@ -316,7 +321,9 @@ function ResultReleasePageContent() {
 
       setActionNotice(
         action === 'release'
-          ? 'Report released successfully.'
+          ? reportMeta?.reportStatus === 'released'
+            ? 'Released PDF regenerated successfully.'
+            : 'Report released successfully.'
           : action === 'flag_review'
             ? 'Visit flagged for review.'
             : 'Report validated successfully.'
@@ -433,19 +440,24 @@ function ResultReleasePageContent() {
               border: 1px solid #cfd8cf;
               background: #ffffff;
             }
+            .lab-report__sheet--xray {
+              margin-top: 24px;
+              page-break-before: always;
+              break-before: page;
+            }
             .lab-report__watermark {
               position: absolute;
               inset: 0;
               display: flex;
               align-items: center;
               justify-content: center;
-              opacity: 0.045;
+              opacity: 0.14;
             }
-            .lab-report__watermark-ring {
-              width: 470px;
-              height: 470px;
-              border-radius: 9999px;
-              border: 22px solid #0b65b1;
+            .lab-report__watermark img,
+            .lab-report__watermark-image {
+              width: 400px;
+              height: 400px;
+              object-fit: contain;
             }
             .lab-report__content {
               position: relative;
@@ -466,15 +478,15 @@ function ResultReleasePageContent() {
               margin-top: 2px;
               width: 64px;
               height: 64px;
-              border: 3px solid #0b65b1;
-              border-radius: 9999px;
               display: flex;
               align-items: center;
               justify-content: center;
-              color: #0b65b1;
-              font-size: 9px;
-              font-weight: 900;
-              line-height: 1.2;
+              overflow: hidden;
+            }
+            .lab-report__logo img {
+              width: 64px;
+              height: 64px;
+              object-fit: contain;
             }
             .lab-report__header-main {
               flex: 1;
@@ -615,6 +627,17 @@ function ResultReleasePageContent() {
               margin-top: 24px;
               padding: 20px;
             }
+            .lab-report__narrative {
+              page-break-before: always;
+              break-before: page;
+              page-break-inside: avoid;
+              break-inside: avoid-page;
+            }
+            .lab-report__narrative--xraypage {
+              page-break-before: auto;
+              break-before: auto;
+              margin-top: 16px;
+            }
             .lab-report__narrative-title {
               margin: 0;
               text-align: center;
@@ -678,6 +701,10 @@ function ResultReleasePageContent() {
               padding-top: 12px;
               border-top: 1px solid #475569;
             }
+            .lab-report__xray-footer {
+              margin-top: 40px;
+              padding-top: 32px;
+            }
             .lab-report__signature-name {
               margin: 0;
               font-weight: 700;
@@ -699,6 +726,17 @@ function ResultReleasePageContent() {
               }
               .report-sheet {
                 max-width: none;
+              }
+              .lab-report__sheet--xray {
+                page-break-before: always;
+                break-before: page;
+              }
+              .lab-report__narrative--xraypage {
+                page-break-before: auto;
+                break-before: auto;
+                page-break-inside: avoid;
+                break-inside: avoid-page;
+                margin-top: 16px;
               }
             }
           </style>
@@ -964,7 +1002,11 @@ function ResultReleasePageContent() {
                 }
                 onClick={() => handleReportAction('release')}
               >
-                {isSavingStatus ? 'Saving...' : 'Release Result'}
+                {isSavingStatus
+                  ? 'Saving...'
+                  : reportMeta?.reportStatus === 'released'
+                    ? 'Regenerate Released PDF'
+                    : 'Release Result'}
               </Button>
               <Button variant="outline" className="w-full" onClick={handlePrintReport}>
                 <Download className="mr-2 h-4 w-4" />

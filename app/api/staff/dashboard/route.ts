@@ -258,7 +258,8 @@ export async function GET() {
           .join(' ');
 
         return {
-          id: patient?.patient_code ?? visit.id,
+          id: String(visit.id),
+          patientCode: patient?.patient_code ?? 'N/A',
           name,
           requestTime: new Date(String(visit.created_at)).toLocaleTimeString('en-PH', {
             hour: 'numeric',

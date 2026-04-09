@@ -6,8 +6,66 @@ import { Download, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-rea
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { PageLayout } from '@/components/layout/page-layout';
-import type { PatientRecord } from '@/lib/patient-record-types';
+import type { PatientRecord, VisitRecord } from '@/lib/patient-record-types';
+import { generatePatientRecordsPdf } from '@/lib/patient-records-pdf';
+
+type VisitTableRow = {
+  visitId: string;
+  queueEntryId: string;
+  queueNumber: string;
+  patientId: string;
+  patientName: string;
+  patientCode: string;
+  company: string;
+  contactNumber: string;
+  emailAddress: string;
+  birthDate: string;
+  gender: string;
+  address: string;
+  serviceType: string;
+  requestedLabService: string;
+  currentLane: string;
+  visitStatus: VisitRecord['visitStatus'];
+  pendingLanes: string[];
+  completedLanes: string[];
+  createdAt: string;
+  updatedAt: string;
+  billing: VisitRecord['billing'];
+  machineResults: VisitRecord['machineResults'];
+  labNumbers: string[];
+  notes: string;
+};
+
+function getCompletionBadge(visitStatus: VisitRecord['visitStatus']) {
+  return visitStatus === 'paid' || visitStatus === 'completed'
+    ? {
+        label: 'Complete',
+        className: 'bg-emerald-100 text-emerald-700',
+      }
+    : {
+        label: 'Pending',
+        className: 'bg-amber-100 text-amber-700',
+      };
+}
+
+function formatVisitStatus(visitStatus: VisitRecord['visitStatus']) {
+  switch (visitStatus) {
+    case 'in-progress':
+      return 'In Progress';
+    case 'awaiting-payment':
+      return 'Awaiting Payment';
+    default:
+      return visitStatus.charAt(0).toUpperCase() + visitStatus.slice(1);
+  }
+}
 
 export default function PatientRecordsPage() {
   const [records, setRecords] = useState<PatientRecord[]>([]);
@@ -16,9 +74,10 @@ export default function PatientRecordsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
+  const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
   const [downloadingQueueId, setDownloadingQueueId] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -45,9 +104,12 @@ export default function PatientRecordsPage() {
           params.set('endDate', endDate);
         }
 
-        const response = await fetch(`/api/staff/patient-records${params.toString() ? `?${params.toString()}` : ''}`, {
-          cache: 'no-store',
-        });
+        const response = await fetch(
+          `/api/staff/patient-records${params.toString() ? `?${params.toString()}` : ''}`,
+          {
+            cache: 'no-store',
+          }
+        );
         const payload = (await response.json()) as {
           error?: string;
           records?: PatientRecord[];
@@ -61,21 +123,7 @@ export default function PatientRecordsPage() {
           return;
         }
 
-        const nextRecords = payload.records ?? [];
-        const queuedPatient =
-          selectedQueueId
-            ? nextRecords.find((patient) =>
-                patient.visits.some((visit) => visit.queueEntryId === selectedQueueId)
-              )
-            : null;
-
-        setRecords(nextRecords);
-        setSelectedPatientId((current) =>
-          queuedPatient?.id ??
-          (current && nextRecords.some((patient) => patient.id === current)
-            ? current
-            : nextRecords[0]?.id ?? null)
-        );
+        setRecords(payload.records ?? []);
       } catch (error) {
         if (!isMounted) {
           return;
@@ -83,7 +131,6 @@ export default function PatientRecordsPage() {
 
         setPageError(error instanceof Error ? error.message : 'Unable to load patient records.');
         setRecords([]);
-        setSelectedPatientId(null);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -98,7 +145,7 @@ export default function PatientRecordsPage() {
       isMounted = false;
       window.removeEventListener('focus', loadRecords);
     };
-  }, [selectedQueueId, startDate, endDate]);
+  }, [startDate, endDate]);
 
   const handleDownloadPdf = async (queueId: string) => {
     try {
@@ -124,53 +171,121 @@ export default function PatientRecordsPage() {
     }
   };
 
-  const filteredRecords = useMemo(() => {
+  const handleExportRecordsPdf = async () => {
+    try {
+      setIsExportingPdf(true);
+
+      const pdfBlob = await generatePatientRecordsPdf({
+        rows: visitRows.map((visit) => ({
+          queueNumber: visit.queueNumber,
+          patientName: visit.patientName,
+          patientCode: visit.patientCode,
+          serviceType: visit.requestedLabService
+            ? `${visit.serviceType} - ${visit.requestedLabService}`
+            : visit.serviceType,
+          currentLane: visit.currentLane,
+          visitStatus: formatVisitStatus(visit.visitStatus),
+          labNumber: visit.labNumbers.join(', ') || 'N/A',
+          createdAt: new Date(visit.createdAt).toLocaleString('en-PH'),
+        })),
+        startDate,
+        endDate,
+      });
+
+      const objectUrl = window.URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      const dateLabel =
+        startDate || endDate ? `${startDate || 'any'}_${endDate || 'any'}` : 'all-records';
+      link.href = objectUrl;
+      link.download = `patient-records-${dateLabel}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Unable to export patient records PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const visitRows = useMemo<VisitTableRow[]>(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    if (!query) {
-      return records;
-    }
+    return records
+      .flatMap((patient) =>
+        patient.visits.map((visit) => ({
+          visitId: visit.id,
+          queueEntryId: visit.queueEntryId,
+          queueNumber: visit.queueNumber,
+          patientId: patient.id,
+          patientName: [patient.firstName, patient.middleName, patient.lastName].filter(Boolean).join(' '),
+          patientCode: patient.id,
+          company: patient.company,
+          contactNumber: patient.contactNumber,
+          emailAddress: patient.emailAddress,
+          birthDate: patient.birthDate,
+          gender: patient.gender,
+          address: [patient.streetAddress, patient.city, patient.province].filter(Boolean).join(', '),
+          serviceType: visit.serviceType,
+          requestedLabService: visit.requestedLabService,
+          currentLane: visit.currentLane,
+          visitStatus: visit.visitStatus,
+          pendingLanes: visit.pendingLanes,
+          completedLanes: visit.completedLanes,
+          createdAt: visit.createdAt,
+          updatedAt: visit.updatedAt,
+          billing: visit.billing,
+          machineResults: visit.machineResults,
+          labNumbers: visit.labNumbers,
+          notes: visit.notes,
+        }))
+      )
+      .filter((row) => {
+        if (!query) {
+          return true;
+        }
 
-    return records.filter((patient) => {
-      const fullName = [patient.firstName, patient.middleName, patient.lastName]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-
-      return (
-        fullName.includes(query) ||
-        patient.company.toLowerCase().includes(query) ||
-        patient.contactNumber.toLowerCase().includes(query) ||
-        patient.emailAddress.toLowerCase().includes(query) ||
-        patient.city.toLowerCase().includes(query)
-      );
-    });
+        return [
+          row.patientName,
+          row.patientCode,
+          row.company,
+          row.contactNumber,
+          row.emailAddress,
+          row.queueNumber,
+          row.serviceType,
+          row.requestedLabService,
+          row.currentLane,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(query);
+      })
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   }, [records, searchQuery]);
 
-  const selectedPatient =
-    filteredRecords.find((patient) => patient.id === selectedPatientId) ??
-    filteredRecords[0] ??
-    null;
+  useEffect(() => {
+    if (visitRows.length === 0) {
+      setSelectedVisitId(null);
+      return;
+    }
 
-  const selectedPatientStatus = selectedPatient
-    ? selectedPatient.visits.every(
-        (visit) => visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
-      )
-      ? 'Complete'
-      : 'Pending'
-    : null;
+    if (selectedQueueId) {
+      const matchedVisit = visitRows.find((visit) => visit.queueEntryId === selectedQueueId);
+      if (matchedVisit) {
+        setSelectedVisitId(matchedVisit.visitId);
+        return;
+      }
+    }
 
-  const totalVisits = records.reduce((count, patient) => count + patient.visits.length, 0);
-  const paidVisits = records.reduce(
-    (count, patient) =>
-      count + patient.visits.filter((visit) => visit.billing?.paymentStatus === 'paid').length,
-    0
-  );
-  const importedResults = records.reduce(
-    (count, patient) =>
-      count + patient.visits.reduce((sum, visit) => sum + visit.machineResults.length, 0),
-    0
-  );
+    setSelectedVisitId((current) =>
+      current && visitRows.some((visit) => visit.visitId === current) ? current : null
+    );
+  }, [selectedQueueId, visitRows]);
+
+  const selectedVisit = visitRows.find((visit) => visit.visitId === selectedVisitId) ?? null;
+  const paidVisits = visitRows.filter((visit) => visit.billing?.paymentStatus === 'paid').length;
+  const importedResults = visitRows.reduce((count, visit) => count + visit.machineResults.length, 0);
 
   return (
     <PageLayout>
@@ -182,14 +297,13 @@ export default function PatientRecordsPage() {
             </p>
             <h1 className="mt-2 text-3xl font-bold">Patient Records</h1>
             <p className="mt-2 text-muted-foreground">
-              Review patient demographics, visit history, billing status, and imported machine
-              results from one management workspace.
+              View patient visit history in a simple records list, then open each record for full details.
             </p>
           </div>
         </div>
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <Card className="p-5">
+          <Card className="p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-primary/10 p-3 text-primary">
                 <UserRound className="h-5 w-5" />
@@ -203,7 +317,7 @@ export default function PatientRecordsPage() {
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card className="p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-primary/10 p-3 text-primary">
                 <Wallet className="h-5 w-5" />
@@ -217,7 +331,7 @@ export default function PatientRecordsPage() {
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card className="p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-primary/10 p-3 text-primary">
                 <FileSpreadsheet className="h-5 w-5" />
@@ -232,343 +346,252 @@ export default function PatientRecordsPage() {
           </Card>
         </div>
 
-        <div className="mt-8 grid gap-6 xl:grid-cols-[0.78fr_1.22fr]">
-          <Card className="p-6">
-            <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search patient name, company, contact, email, city..."
-                  className="pl-10"
-                />
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    From
-                  </p>
-                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                </div>
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    To
-                  </p>
-                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setStartDate('');
-                    setEndDate('');
-                  }}
-                >
-                  Clear Dates
-                </Button>
-              </div>
+        <Card className="mt-8 p-6 shadow-sm">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto]">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search patient, queue number, company, contact, service..."
+                className="pl-10"
+              />
             </div>
 
-            <div className="mt-6 flex items-center justify-between">
-              <h2 className="text-lg font-bold">Patient Directory</h2>
+            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <div className="flex gap-2">
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStartDate('');
+                  setEndDate('');
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-between">
+            <h2 className="text-lg font-bold">Records List</h2>
+            <div className="flex items-center gap-2">
               <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
-                {filteredRecords.length} records
+                {visitRows.length} visits
               </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleExportRecordsPdf()}
+                disabled={visitRows.length === 0 || isExportingPdf}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {isExportingPdf ? 'Exporting...' : 'Export PDF'}
+              </Button>
             </div>
+          </div>
 
-            <div className="mt-4 max-h-[42rem] space-y-3 overflow-y-auto pr-1">
-              {filteredRecords.length > 0 ? (
-                filteredRecords.map((patient) => {
-                  const fullName = [patient.firstName, patient.middleName, patient.lastName]
-                    .filter(Boolean)
-                    .join(' ');
+          <div className="mt-4 overflow-hidden rounded-xl border border-border">
+            <div className="max-h-[42rem] overflow-auto">
+              <table className="w-full min-w-[72rem] text-sm">
+                <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                  <tr className="border-b border-border">
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Queue</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Patient</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Service</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Current Lane</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Lab No.</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visitRows.length > 0 ? (
+                    visitRows.map((visit) => {
+                      const completionBadge = getCompletionBadge(visit.visitStatus);
 
-                  return (
-                    <button
-                      key={patient.id}
-                      type="button"
-                      onClick={() => setSelectedPatientId(patient.id)}
-                      className={`w-full rounded-xl border p-4 text-left transition-colors ${
-                        selectedPatient?.id === patient.id
-                          ? 'border-primary bg-primary/5'
-                          : 'border-border bg-background hover:border-primary/40'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold">{fullName}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {patient.contactNumber}
-                          </p>
-                          {patient.company && (
-                            <p className="mt-1 text-xs text-muted-foreground">{patient.company}</p>
-                          )}
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {patient.city}, {patient.province}
-                          </p>
-                        </div>
-                        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-                          {patient.visits.length} visits
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-                  {isLoading
-                    ? 'Loading patient records...'
-                    : pageError || 'No patient records matched the current search.'}
-                </div>
-              )}
+                      return (
+                        <tr
+                          key={visit.visitId}
+                          onClick={() => setSelectedVisitId(visit.visitId)}
+                          className="cursor-pointer border-b border-border bg-background transition-colors hover:bg-muted/40"
+                        >
+                          <td className="px-4 py-3 font-semibold">{visit.queueNumber}</td>
+                          <td className="px-4 py-3">
+                            <div>
+                              <p className="font-medium">{visit.patientName}</p>
+                              <p className="text-xs text-muted-foreground">{visit.patientCode}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <p>{visit.serviceType}</p>
+                            {visit.requestedLabService && (
+                              <p className="text-xs text-muted-foreground">{visit.requestedLabService}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">{visit.currentLane}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold">
+                                {formatVisitStatus(visit.visitStatus)}
+                              </span>
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${completionBadge.className}`}>
+                                {completionBadge.label}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">{visit.labNumbers.length > 0 ? visit.labNumbers.join(', ') : 'N/A'}</td>
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {new Date(visit.createdAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                        {isLoading
+                          ? 'Loading patient records...'
+                          : pageError || 'No patient records matched the current filters.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-          </Card>
+          </div>
+        </Card>
 
-          <div className="space-y-6">
-            {selectedPatient ? (
+        <Dialog open={Boolean(selectedVisit)} onOpenChange={(open) => !open && setSelectedVisitId(null)}>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+            {selectedVisit ? (
               <>
-                <Card className="p-6">
-                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Selected Patient
+                <DialogHeader>
+                  <DialogTitle>{selectedVisit.patientName}</DialogTitle>
+                  <DialogDescription>
+                    {selectedVisit.queueNumber} • {selectedVisit.serviceType}
+                    {selectedVisit.requestedLabService ? ` • ${selectedVisit.requestedLabService}` : ''}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-muted/20 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Patient Information
+                    </p>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p><span className="font-semibold">Patient ID:</span> {selectedVisit.patientCode}</p>
+                      <p><span className="font-semibold">Birth Date:</span> {selectedVisit.birthDate}</p>
+                      <p><span className="font-semibold">Gender:</span> {selectedVisit.gender}</p>
+                      <p><span className="font-semibold">Contact:</span> {selectedVisit.contactNumber}</p>
+                      <p><span className="font-semibold">Email:</span> {selectedVisit.emailAddress || 'N/A'}</p>
+                      <p><span className="font-semibold">Company:</span> {selectedVisit.company || 'N/A'}</p>
+                      <p><span className="font-semibold">Address:</span> {selectedVisit.address}</p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-muted/20 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Visit Summary
+                    </p>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p><span className="font-semibold">Current Lane:</span> {selectedVisit.currentLane}</p>
+                      <p><span className="font-semibold">Visit Status:</span> {formatVisitStatus(selectedVisit.visitStatus)}</p>
+                      <p><span className="font-semibold">Lab Number:</span> {selectedVisit.labNumbers.join(', ') || 'N/A'}</p>
+                      <p><span className="font-semibold">Created:</span> {new Date(selectedVisit.createdAt).toLocaleString()}</p>
+                      <p><span className="font-semibold">Updated:</span> {new Date(selectedVisit.updatedAt).toLocaleString()}</p>
+                      <p><span className="font-semibold">Pending Steps:</span> {selectedVisit.pendingLanes.join(', ') || 'None'}</p>
+                      <p><span className="font-semibold">Completed Steps:</span> {selectedVisit.completedLanes.join(', ') || 'None'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-background p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Billing
+                    </p>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p>
+                        <span className="font-semibold">Status:</span>{' '}
+                        {selectedVisit.billing ? selectedVisit.billing.paymentStatus : 'No billing yet'}
                       </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-3">
-                        <h2 className="text-3xl font-bold">
-                          {[
-                            selectedPatient.firstName,
-                            selectedPatient.middleName,
-                            selectedPatient.lastName,
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                        </h2>
-                        {selectedPatientStatus && (
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                              selectedPatientStatus === 'Complete'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : 'bg-amber-100 text-amber-700'
-                            }`}
-                          >
-                            {selectedPatientStatus}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {selectedPatient.birthDate} - {selectedPatient.gender} -{' '}
-                        {selectedPatient.contactNumber}
+                      <p>
+                        <span className="font-semibold">Method:</span>{' '}
+                        {selectedVisit.billing ? selectedVisit.billing.paymentMethod : 'N/A'}
                       </p>
-                      {selectedPatient.company && (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          Company: {selectedPatient.company}
-                        </p>
-                      )}
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Lab Numbers:{' '}
-                        {selectedPatient.visits.flatMap((visit) => visit.labNumbers).length > 0
-                          ? Array.from(
-                              new Set(selectedPatient.visits.flatMap((visit) => visit.labNumbers))
-                            ).join(', ')
+                      <p>
+                        <span className="font-semibold">Total:</span>{' '}
+                        {selectedVisit.billing ? selectedVisit.billing.total : 'N/A'}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Paid At:</span>{' '}
+                        {selectedVisit.billing?.paidAt
+                          ? new Date(selectedVisit.billing.paidAt).toLocaleString()
                           : 'N/A'}
                       </p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {selectedPatient.emailAddress}
-                      </p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {selectedPatient.streetAddress}, {selectedPatient.city},{' '}
-                        {selectedPatient.province}
-                      </p>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Visits
-                        </p>
-                        <p className="mt-2 text-3xl font-bold">{selectedPatient.visits.length}</p>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Active Billing
-                        </p>
-                        <p className="mt-2 text-3xl font-bold">
-                          {selectedPatient.visits.filter((visit) => visit.billing).length}
-                        </p>
-                      </div>
                     </div>
                   </div>
-                </Card>
 
-                <Card className="p-6">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-bold">Visit History</h2>
-                    <span className="text-sm text-muted-foreground">
-                      {totalVisits} total visits in system
-                    </span>
+                  <div className="rounded-xl border border-border bg-background p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Notes
+                    </p>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      {selectedVisit.notes || 'No remarks saved for this visit.'}
+                    </p>
                   </div>
+                </div>
 
-                  <div className="mt-5 space-y-4">
-                    {selectedPatient.visits.map((visit) => (
-                      <div
-                        key={visit.id}
-                        className={`rounded-2xl border bg-muted/20 p-5 ${
-                          selectedQueueId && visit.queueEntryId === selectedQueueId
-                            ? 'border-primary bg-primary/5'
-                            : 'border-border'
-                        }`}
-                      >
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                          <div>
-                            <div className="flex items-center gap-3">
-                              <p className="text-xl font-bold">{visit.queueNumber}</p>
-                              <span className="rounded-full bg-background px-3 py-1 text-xs font-semibold">
-                                {visit.visitStatus}
-                              </span>
-                              <span
-                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                  visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
-                                    ? 'bg-emerald-100 text-emerald-700'
-                                    : 'bg-amber-100 text-amber-700'
-                                }`}
-                              >
-                                {visit.visitStatus === 'paid' || visit.visitStatus === 'completed'
-                                  ? 'Complete'
-                                  : 'Pending'}
-                              </span>
-                            </div>
-                            <p className="mt-2 text-sm text-muted-foreground">
-                              {visit.serviceType}
-                              {visit.requestedLabService ? ` - ${visit.requestedLabService}` : ''}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Lab Number: {visit.labNumbers.length > 0 ? visit.labNumbers.join(', ') : 'N/A'}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Created {new Date(visit.createdAt).toLocaleString()}
-                            </p>
-                          </div>
-
-                          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[20rem]">
-                            <div className="rounded-xl border border-border bg-background p-3">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Current Lane
-                              </p>
-                              <p className="mt-2 font-semibold">{visit.currentLane}</p>
-                            </div>
-                            <div className="rounded-xl border border-border bg-background p-3">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Billing
-                              </p>
-                              <p className="mt-2 font-semibold">
-                                {visit.billing
-                                  ? `${visit.billing.paymentStatus} - ${visit.billing.paymentMethod}`
-                                  : 'No billing yet'}
-                              </p>
-                            </div>
-                          </div>
+                {selectedVisit.machineResults.length > 0 && (
+                  <div className="rounded-xl border border-border bg-background p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Imported Machine Results
+                    </p>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      {selectedVisit.machineResults.map((result) => (
+                        <div key={result.id} className="rounded-xl border border-border bg-muted/20 p-4">
+                          <p className="font-semibold">{result.lane}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">{result.testName}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Order: {result.orderId || 'N/A'}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {result.results.length} analytes • {new Date(result.importedAt).toLocaleString()}
+                          </p>
                         </div>
-
-                        <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                          <div className="rounded-xl border border-border bg-background p-4">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Pending Steps
-                            </p>
-                            <p className="mt-2 text-sm font-medium">
-                              {visit.pendingLanes.join(', ') || 'None'}
-                            </p>
-                          </div>
-                          <div className="rounded-xl border border-border bg-background p-4">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Completed Steps
-                            </p>
-                            <p className="mt-2 text-sm font-medium">
-                              {visit.completedLanes.join(', ') || 'None'}
-                            </p>
-                          </div>
-                        </div>
-
-                        {visit.machineResults.length > 0 && (
-                          <div className="mt-5 rounded-xl border border-border bg-background p-4">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Imported Machine Results
-                            </p>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              {visit.machineResults.map((result) => (
-                                <div
-                                  key={result.id}
-                                  className="rounded-xl border border-border bg-muted/20 p-4"
-                                >
-                                  <p className="font-semibold">{result.lane}</p>
-                                  <p className="mt-1 text-sm text-muted-foreground">
-                                    {result.testName}
-                                  </p>
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    Order: {result.orderId || 'N/A'}
-                                  </p>
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    {result.results.length} analytes -{' '}
-                                    {new Date(result.importedAt).toLocaleString()}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {visit.queueEntryId && (
-                          <div className="mt-5 flex flex-wrap justify-end gap-2">
-                            <Button asChild variant="outline" size="sm">
-                              <Link
-                                href={`/staff/result-release?queueId=${encodeURIComponent(
-                                  visit.queueEntryId
-                                )}`}
-                              >
-                                Open Result Release
-                              </Link>
-                            </Button>
-                            <Button asChild variant="outline" size="sm">
-                              <Link
-                                href={`/report/${encodeURIComponent(visit.queueEntryId)}`}
-                                target="_blank"
-                              >
-                                View Soft Copy
-                              </Link>
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void handleDownloadPdf(visit.queueEntryId)}
-                              disabled={downloadingQueueId === visit.queueEntryId}
-                            >
-                              <Download className="mr-2 h-4 w-4" />
-                              {downloadingQueueId === visit.queueEntryId
-                                ? 'Preparing PDF...'
-                                : 'Open PDF'}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </Card>
+                )}
+
+                {selectedVisit.queueEntryId && (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/staff/result-release?queueId=${encodeURIComponent(selectedVisit.queueEntryId)}`}>
+                        Open Result Release
+                      </Link>
+                    </Button>
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/report/${encodeURIComponent(selectedVisit.queueEntryId)}`} target="_blank">
+                        View Soft Copy
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleDownloadPdf(selectedVisit.queueEntryId)}
+                      disabled={downloadingQueueId === selectedVisit.queueEntryId}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {downloadingQueueId === selectedVisit.queueEntryId ? 'Preparing PDF...' : 'Open PDF'}
+                    </Button>
+                  </div>
+                )}
               </>
-            ) : (
-              <Card className="p-10 text-center text-muted-foreground">
-                {isLoading
-                  ? 'Loading patient records...'
-                  : pageError
-                    ? pageError
-                    : 'Select a patient record from the directory to view details.'}
-              </Card>
-            )}
-          </div>
-        </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
       </div>
     </PageLayout>
   );

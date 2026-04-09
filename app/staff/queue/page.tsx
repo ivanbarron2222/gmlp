@@ -155,6 +155,7 @@ export default function QueueManagementPage() {
         (lane !== 'DOCTOR' ||
           !staffProfileId ||
           stationRole !== 'doctor' ||
+          !item.assignedDoctorId ||
           item.assignedDoctorId === staffProfileId)
     );
 
@@ -166,21 +167,9 @@ export default function QueueManagementPage() {
         (lane !== 'DOCTOR' ||
           !staffProfileId ||
           stationRole !== 'doctor' ||
+          !item.assignedDoctorId ||
           item.assignedDoctorId === staffProfileId)
     );
-
-  const handleAcceptNext = async (lane: QueueLane) => {
-    if (lane === 'GENERAL') {
-      return;
-    }
-
-      const nextQueue = await postQueueAction({
-        action: 'accept_next',
-        lane,
-        actorStaffId: lane === 'DOCTOR' ? staffProfileId ?? undefined : undefined,
-      });
-      setQueue(nextQueue);
-  };
 
   const handleCallNext = async (lane: QueueLane) => {
     if (lane === 'GENERAL') {
@@ -197,11 +186,6 @@ export default function QueueManagementPage() {
     if (payload.activatedQueueId) {
       router.push(getQueueWorkflowPath(payload.activatedQueueId, lane));
     }
-  };
-
-  const handleFinishStep = async (queueId: string) => {
-    const nextQueue = await postQueueAction({ action: 'finish_step', queueId });
-    setQueue(nextQueue);
   };
 
   const handleAddReferral = async (queueId: string, lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG') => {
@@ -265,13 +249,10 @@ export default function QueueManagementPage() {
                   </p>
                   <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Accept the next patient, call the queue, and finish the current station step from this panel.
+                    Use one action only. `Call Next` automatically completes the current patient in this station and moves the next patient into now serving.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Button variant="outline" onClick={() => void handleAcceptNext(lane)}>
-                    Accept Next
-                  </Button>
+                <div className="grid gap-3 sm:grid-cols-1">
                   <Button onClick={() => void handleCallNext(lane)}>Call Next</Button>
                 </div>
               </div>
@@ -336,16 +317,6 @@ export default function QueueManagementPage() {
                               </Button>
                             </>
                           )}
-
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleFinishStep(item.id)}
-                          >
-                            {item.pendingLanes.length > 1
-                              ? 'Finish Step and Return to General'
-                              : 'Complete Queue'}
-                          </Button>
                         </div>
                       </div>
                     </div>
@@ -550,8 +521,7 @@ export default function QueueManagementPage() {
                         </p>
                         <h2 className="mt-2 text-3xl font-bold">{lane}</h2>
                         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                          Accepts patients from GENERAL. Priority entries are accepted first. Long
-                          lists are scrollable so the board stays manageable.
+                          One-button flow for the station. `Call Next` completes the current patient in this lane and brings the next eligible patient into now serving.
                         </p>
                       </div>
                       <div className="grid min-w-40 grid-cols-2 gap-3">
@@ -570,10 +540,7 @@ export default function QueueManagementPage() {
                       </div>
                     </div>
 
-                    <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:max-w-md">
-                      <Button variant="outline" onClick={() => void handleAcceptNext(lane)}>
-                        Accept Next
-                      </Button>
+                    <div className="mb-6 grid gap-3 sm:grid-cols-1 xl:max-w-xs">
                       <Button onClick={() => void handleCallNext(lane)}>Call Next</Button>
                     </div>
 
@@ -637,16 +604,6 @@ export default function QueueManagementPage() {
                                         </Button>
                                       </>
                                     )}
-
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => void handleFinishStep(item.id)}
-                                    >
-                                      {item.pendingLanes.length > 1
-                                        ? 'Finish Step and Return to General'
-                                        : 'Complete Queue'}
-                                    </Button>
                                   </div>
                                 </div>
                               </div>

@@ -11,6 +11,8 @@ export interface BillingRecord {
   subtotal: number;
   discount: number;
   total: number;
+  invoiceNumber?: string;
+  receiptNumber?: string;
   paymentMethod: BillingPaymentMethod;
   paymentStatus: 'unpaid' | 'paid';
   paidAt?: string;

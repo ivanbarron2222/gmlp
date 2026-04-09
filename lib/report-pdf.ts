@@ -1,5 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { LabReportTemplateData } from '@/components/common/lab-report-template';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 function wrapText(text: string, maxLength: number) {
   if (!text) {
@@ -27,18 +29,61 @@ function wrapText(text: string, maxLength: number) {
   return lines;
 }
 
-export async function generateLabReportPdf(data: LabReportTemplateData) {
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595.28, 841.89]);
-  const font = await pdf.embedFont(StandardFonts.TimesRoman);
-  const boldFont = await pdf.embedFont(StandardFonts.TimesRomanBold);
-  const blue = rgb(11 / 255, 101 / 255, 177 / 255);
-  const dark = rgb(15 / 255, 23 / 255, 42 / 255);
+async function loadLogoImage(pdf: PDFDocument) {
+  try {
+    const logoPath = path.join(process.cwd(), 'public', 'gmlp_logo.png');
+    const logoBytes = await readFile(logoPath);
+    return await pdf.embedPng(logoBytes);
+  } catch {
+    return null;
+  }
+}
 
+function drawCenteredWatermark(
+  page: PDFPageLike,
+  logoImage: Awaited<ReturnType<typeof loadLogoImage>> | null
+) {
+  if (!logoImage) {
+    return;
+  }
+
+  const pageWidth = page.getWidth();
+  const pageHeight = page.getHeight();
+  const watermarkSize = 300;
+  const x = (pageWidth - watermarkSize) / 2;
+  const y = (pageHeight - watermarkSize) / 2;
+
+  page.drawImage(logoImage, {
+    x,
+    y,
+    width: watermarkSize,
+    height: watermarkSize,
+    opacity: 0.14,
+  });
+}
+
+function drawReportHeader(
+  page: PDFPageLike,
+  data: LabReportTemplateData,
+  fonts: { font: PDFFontLike; boldFont: PDFFontLike },
+  colors: { blue: ReturnType<typeof rgb>; dark: ReturnType<typeof rgb> },
+  logoImage?: Awaited<ReturnType<typeof loadLogoImage>>
+) {
+  const { font, boldFont } = fonts;
+  const { blue, dark } = colors;
   let y = 802;
 
+  if (logoImage) {
+    page.drawImage(logoImage, {
+      x: 40,
+      y: 740,
+      width: 54,
+      height: 54,
+    });
+  }
+
   page.drawText('GLOBALIFE MEDICAL LABORATORY & POLYCLINIC', {
-    x: 90,
+    x: 102,
     y,
     size: 9,
     font: boldFont,
@@ -88,7 +133,20 @@ export async function generateLabReportPdf(data: LabReportTemplateData) {
     thickness: 1.5,
     color: blue,
   });
-  y -= 24;
+
+  return y - 24;
+}
+
+function drawPatientSummary(
+  page: PDFPageLike,
+  data: LabReportTemplateData,
+  fonts: { font: PDFFontLike },
+  colors: { dark: ReturnType<typeof rgb> },
+  startY: number
+) {
+  const { font } = fonts;
+  const { dark } = colors;
+  let y = startY;
 
   const patientLines = [
     `Name: ${data.patient.name}`,
@@ -113,7 +171,111 @@ export async function generateLabReportPdf(data: LabReportTemplateData) {
     }
   }
 
-  y -= 6;
+  return y - 6;
+}
+
+function drawSignatures(
+  page: PDFPageLike,
+  signatures: LabReportTemplateData['signatures'],
+  fonts: { font: PDFFontLike; boldFont: PDFFontLike },
+  colors: { dark: ReturnType<typeof rgb> },
+  signatureY: number
+) {
+  const { font, boldFont } = fonts;
+  const { dark } = colors;
+
+  signatures.slice(0, 2).forEach((signature, index) => {
+    const x = index === 0 ? 75 : 345;
+    page.drawLine({
+      start: { x, y: signatureY + 34 },
+      end: { x: x + 170, y: signatureY + 34 },
+      thickness: 0.7,
+      color: dark,
+    });
+    page.drawText(signature.name, {
+      x: x + 14,
+      y: signatureY + 18,
+      size: 10.5,
+      font: boldFont,
+      color: dark,
+    });
+    page.drawText(signature.role, {
+      x: x + 42,
+      y: signatureY + 4,
+      size: 10,
+      font,
+      color: dark,
+    });
+    if (signature.license) {
+      page.drawText(signature.license, {
+        x: x + 34,
+        y: signatureY - 10,
+        size: 9.5,
+        font,
+        color: dark,
+      });
+    }
+  });
+}
+
+type PDFFontLike = Awaited<ReturnType<PDFDocument['embedFont']>>;
+type PDFPageLike = ReturnType<PDFDocument['addPage']>;
+
+function drawSingleSignature(
+  page: PDFPageLike,
+  signature: NonNullable<LabReportTemplateData['xraySignature']>,
+  fonts: { font: PDFFontLike; boldFont: PDFFontLike },
+  colors: { dark: ReturnType<typeof rgb> },
+  signatureY: number
+) {
+  const { font, boldFont } = fonts;
+  const { dark } = colors;
+  const x = 212;
+
+  page.drawLine({
+    start: { x, y: signatureY + 34 },
+    end: { x: x + 170, y: signatureY + 34 },
+    thickness: 0.7,
+    color: dark,
+  });
+  page.drawText(signature.name, {
+    x: x + 14,
+    y: signatureY + 18,
+    size: 10.5,
+    font: boldFont,
+    color: dark,
+  });
+  page.drawText(signature.role, {
+    x: x + 42,
+    y: signatureY + 4,
+    size: 10,
+    font,
+    color: dark,
+  });
+  if (signature.license) {
+    page.drawText(signature.license, {
+      x: x + 34,
+      y: signatureY - 10,
+      size: 9.5,
+      font,
+      color: dark,
+    });
+  }
+}
+
+export async function generateLabReportPdf(data: LabReportTemplateData) {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595.28, 841.89]);
+  const font = await pdf.embedFont(StandardFonts.TimesRoman);
+  const boldFont = await pdf.embedFont(StandardFonts.TimesRomanBold);
+  const blue = rgb(11 / 255, 101 / 255, 177 / 255);
+  const dark = rgb(15 / 255, 23 / 255, 42 / 255);
+  const logoImage = await loadLogoImage(pdf);
+
+  drawCenteredWatermark(page, logoImage);
+
+  let y = drawReportHeader(page, data, { font, boldFont }, { blue, dark }, logoImage);
+  y = drawPatientSummary(page, data, { font }, { dark }, y);
 
   for (const section of data.sections) {
     if (y < 145) {
@@ -198,71 +360,57 @@ export async function generateLabReportPdf(data: LabReportTemplateData) {
     y -= 8;
   }
 
-  if (data.xray && y > 170) {
-    page.drawText(data.xray.title.toUpperCase(), {
-      x: 185,
-      y,
+  drawSignatures(page, data.signatures, { font, boldFont }, { dark }, 78);
+
+  if (data.xray) {
+    const xrayPage = pdf.addPage([595.28, 841.89]);
+    drawCenteredWatermark(xrayPage, logoImage);
+
+    let xrayY = drawReportHeader(xrayPage, data, { font, boldFont }, { blue, dark }, logoImage);
+
+    xrayPage.drawText(data.xray.title.toUpperCase(), {
+      x: 175,
+      y: xrayY,
       size: 15,
       font: boldFont,
       color: dark,
     });
-    y -= 18;
+    xrayY -= 22;
 
     for (const line of data.xray.body) {
       for (const wrapped of wrapText(line, 78)) {
-        page.drawText(wrapped, {
+        xrayPage.drawText(wrapped, {
           x: 42,
-          y,
-          size: 10,
+          y: xrayY,
+          size: 10.5,
           font,
           color: dark,
         });
-        y -= 12;
+        xrayY -= 18;
       }
+      xrayY -= 2;
     }
 
     if (data.xray.impression) {
-      y -= 6;
-      page.drawText('Impression:', { x: 42, y, size: 11, font: boldFont, color: dark });
-      y -= 13;
-      page.drawText(data.xray.impression, { x: 42, y, size: 10.5, font: boldFont, color: dark });
-      y -= 14;
+      xrayY -= 8;
+      xrayPage.drawText('Impression', { x: 42, y: xrayY, size: 11, font: boldFont, color: dark });
+      xrayY -= 18;
+      for (const wrapped of wrapText(data.xray.impression, 78)) {
+        xrayPage.drawText(wrapped, {
+          x: 42,
+          y: xrayY,
+          size: 10.5,
+          font: boldFont,
+          color: dark,
+        });
+        xrayY -= 14;
+      }
+    }
+
+    if (data.xraySignature) {
+      drawSingleSignature(xrayPage, data.xraySignature, { font, boldFont }, { dark }, 78);
     }
   }
-
-  const signatureY = 78;
-  data.signatures.slice(0, 2).forEach((signature, index) => {
-    const x = index === 0 ? 75 : 345;
-    page.drawLine({
-      start: { x, y: signatureY + 34 },
-      end: { x: x + 170, y: signatureY + 34 },
-      thickness: 0.7,
-      color: dark,
-    });
-    page.drawText(signature.name, {
-      x: x + 14,
-      y: signatureY + 18,
-      size: 10.5,
-      font: boldFont,
-      color: dark,
-    });
-    page.drawText(signature.role, {
-      x: x + 42,
-      y: signatureY + 4,
-      size: 10,
-      font,
-      color: dark,
-    });
-    if (signature.license) {
-      page.drawText(signature.license, {
-        x: x + 34,
-        y: signatureY - 10,
-        size: 9.5,
-        font,
-        color: dark,
-      });
-    }
-  });
 
   return Buffer.from(await pdf.save());
 }

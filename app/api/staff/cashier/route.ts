@@ -48,7 +48,33 @@ type QueueCashierRow = {
     | null;
 };
 
-function toPatient(row: QueueCashierRow) {
+type PendingBillingItem = {
+  queueId: string;
+  queueNumber: string;
+  patientName: string;
+  serviceType: string;
+  requestedLabService: string;
+  currentLane: string;
+  visitStatus: string;
+  labNumbers: string[];
+  createdAt: string;
+  paymentStatus: 'paid' | 'unpaid';
+};
+
+type PendingBillingRow = Pick<
+  QueueCashierRow,
+  | 'id'
+  | 'queue_number'
+  | 'service_type'
+  | 'requested_lab_service'
+  | 'current_lane'
+  | 'queue_status'
+  | 'created_at'
+  | 'visit_id'
+  | 'patients'
+>;
+
+function toPatient(row: Pick<QueueCashierRow, 'patients'>) {
   const patient = Array.isArray(row.patients) ? row.patients[0] : row.patients;
 
   return {
@@ -100,6 +126,107 @@ async function getQueueContext(queueId: string) {
   };
 }
 
+async function getPendingBillingItems(
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+): Promise<PendingBillingItem[]> {
+  const { data, error } = await supabase
+    .from('queue_entries')
+    .select(`
+      id,
+      queue_number,
+      service_type,
+      requested_lab_service,
+      current_lane,
+      queue_status,
+      created_at,
+      visit_id,
+      patients!inner(first_name, middle_name, last_name)
+    `)
+    .neq('queue_status', 'cancelled')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as PendingBillingRow[];
+
+  const labNumbersByVisitId = new Map<string, string[]>();
+  const invoiceByVisitId = new Map<string, 'draft' | 'unpaid' | 'paid' | 'void'>();
+  const visitIds = rows.map((row) => row.visit_id).filter(Boolean);
+
+  if (visitIds.length > 0) {
+    const { data: orderRows, error: ordersError } = await supabase
+      .from('lab_orders')
+      .select('visit_id, order_number')
+      .in('visit_id', visitIds)
+      .order('created_at', { ascending: true });
+
+    if (ordersError) {
+      throw new Error(ordersError.message);
+    }
+
+    for (const order of orderRows ?? []) {
+      const visitId = String(order.visit_id ?? '');
+      if (!visitId) {
+        continue;
+      }
+
+      const current = labNumbersByVisitId.get(visitId) ?? [];
+      current.push(String(order.order_number ?? '').trim());
+      labNumbersByVisitId.set(visitId, current.filter(Boolean));
+    }
+
+    const { data: invoiceRows, error: invoicesError } = await supabase
+      .from('invoices')
+      .select('visit_id, status, created_at')
+      .in('visit_id', visitIds)
+      .order('created_at', { ascending: false });
+
+    if (invoicesError) {
+      throw new Error(invoicesError.message);
+    }
+
+    for (const invoice of invoiceRows ?? []) {
+      const visitId = String(invoice.visit_id ?? '');
+      if (!visitId || invoiceByVisitId.has(visitId)) {
+        continue;
+      }
+
+      invoiceByVisitId.set(visitId, invoice.status as 'draft' | 'unpaid' | 'paid' | 'void');
+    }
+  }
+
+  return rows
+    .map((row) => {
+      const paymentStatus: PendingBillingItem['paymentStatus'] =
+        invoiceByVisitId.get(String(row.visit_id)) === 'paid' ? 'paid' : 'unpaid';
+
+      return {
+        queueId: String(row.id),
+        queueNumber: String(row.queue_number),
+        patientName: toPatient(row).name,
+        serviceType: dbServiceToUiService(row.service_type),
+        requestedLabService:
+          row.requested_lab_service === 'blood_test'
+            ? 'Blood Test'
+            : row.requested_lab_service === 'drug_test'
+              ? 'Drug Test'
+              : row.requested_lab_service === 'xray'
+                ? 'Xray'
+                : row.requested_lab_service === 'ecg'
+                  ? 'ECG'
+                  : '',
+        currentLane: dbLaneToUiLane(row.current_lane),
+        visitStatus: row.queue_status === 'completed' ? 'awaiting-payment' : 'active',
+        labNumbers: labNumbersByVisitId.get(String(row.visit_id)) ?? [],
+        createdAt: String(row.created_at),
+        paymentStatus,
+      };
+    })
+    .filter((row) => row.paymentStatus !== 'paid');
+}
+
 async function getLabNumbers(
   visitId: string,
   supabase: ReturnType<typeof getSupabaseAdminClient>
@@ -125,7 +252,7 @@ async function getBillingRecord(
 ): Promise<BillingRecord | null> {
   const { data: invoice, error: invoiceError } = await supabase
     .from('invoices')
-    .select('id, status, subtotal, discount_amount, total_amount, balance_amount')
+    .select('id, invoice_number, status, subtotal, discount_amount, total_amount, balance_amount')
     .eq('visit_id', visitId)
     .maybeSingle();
 
@@ -149,7 +276,7 @@ async function getBillingRecord(
 
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
-    .select('payment_method, paid_at')
+    .select('payment_method, paid_at, official_receipt_number')
     .eq('invoice_id', invoice.id)
     .order('paid_at', { ascending: false })
     .limit(1)
@@ -168,6 +295,8 @@ async function getBillingRecord(
     subtotal: Number(invoice.subtotal ?? 0),
     discount: Number(invoice.discount_amount ?? 0),
     total: Number(invoice.total_amount ?? 0),
+    invoiceNumber: invoice.invoice_number ?? undefined,
+    receiptNumber: payment?.official_receipt_number ?? undefined,
     paymentMethod: dbPaymentMethodToUi(payment?.payment_method),
     paymentStatus: invoice.status === 'paid' ? 'paid' : 'unpaid',
     paidAt: payment?.paid_at ?? undefined,
@@ -178,12 +307,14 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const queueId = url.searchParams.get('queueId');
+    const supabase = getSupabaseAdminClient();
+    const pendingVisits = await getPendingBillingItems(supabase);
 
     if (!queueId) {
-      return NextResponse.json({ error: 'Missing queueId.' }, { status: 400 });
+      return NextResponse.json({ pendingVisits, patient: null, visit: null, billing: null, suggestedLineItems: [] });
     }
 
-    const { supabase, queue } = await getQueueContext(queueId);
+    const { queue } = await getQueueContext(queueId);
     const patient = toPatient(queue);
     const existingBilling = await getBillingRecord(queue.visit_id, supabase);
     const labNumbers = await getLabNumbers(queue.visit_id, supabase);
@@ -193,6 +324,7 @@ export async function GET(request: Request) {
       .map((step) => dbLaneToUiLane(step.lane));
 
     return NextResponse.json({
+      pendingVisits,
       patient,
       visit: {
         queueNumber: queue.queue_number,
@@ -278,6 +410,9 @@ export async function POST(request: Request) {
     };
 
     let invoiceId = existingInvoice?.id ?? null;
+    const invoiceNumber = existingInvoice?.invoice_number ?? createInvoiceNumber();
+    const receiptNumber =
+      billing.paymentStatus === 'paid' ? createReceiptNumber() : undefined;
 
     if (invoiceId) {
       const { error: updateInvoiceError } = await supabase
@@ -310,7 +445,7 @@ export async function POST(request: Request) {
       const { data: createdInvoice, error: createInvoiceError } = await supabase
         .from('invoices')
         .insert({
-          invoice_number: createInvoiceNumber(),
+          invoice_number: invoiceNumber,
           ...invoicePayload,
         })
         .select('id')
@@ -344,7 +479,7 @@ export async function POST(request: Request) {
         invoice_id: invoiceId,
         amount: billing.total,
         payment_method: uiPaymentMethodToDb(billing.paymentMethod),
-        official_receipt_number: createReceiptNumber(),
+        official_receipt_number: receiptNumber,
         paid_at: billing.paidAt ?? new Date().toISOString(),
       });
 
@@ -354,7 +489,11 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      billing,
+      billing: {
+        ...billing,
+        invoiceNumber,
+        receiptNumber,
+      },
     });
   } catch (error) {
     return NextResponse.json(

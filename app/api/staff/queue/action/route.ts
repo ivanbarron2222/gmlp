@@ -229,6 +229,10 @@ function matchesDoctorAssignment(
     return true;
   }
 
+  if (!row.assigned_doctor_id) {
+    return true;
+  }
+
   return row.assigned_doctor_id === actorStaffId;
 }
 

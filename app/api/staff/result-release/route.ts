@@ -28,6 +28,10 @@ type AuditEvent = {
   tone: 'default' | 'warning' | 'success';
 };
 
+function createReportId() {
+  return crypto.randomUUID();
+}
+
 async function ensureReportsBucket(supabase: ReturnType<typeof getSupabaseAdminClient>) {
   const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets();
 
@@ -523,6 +527,16 @@ export async function GET(request: Request) {
 
     const xrayImport = (machineImports ?? []).find((item) => item.lane === 'xray');
     const xrayResults = enrichedResults.filter((item) => item.service_lane === 'xray');
+    const xrayParsed = ((xrayImport?.parsed_payload as {
+      testName?: string;
+      examType?: string;
+      findings?: string[];
+      impression?: string;
+      remarks?: string;
+    } | null) ?? null);
+    const xrayNarrativeLines = Array.isArray(xrayParsed?.findings)
+      ? xrayParsed.findings.map((line) => String(line).trim()).filter(Boolean)
+      : [];
     const hasReviewFlag = ((machineImports ?? []) as Array<Record<string, unknown>>).some(
       (item) => String(item.import_status ?? '') === 'rejected'
     );
@@ -626,7 +640,12 @@ export async function GET(request: Request) {
           ? {
               title: 'Roentgenological Report',
               body:
-                xrayResults.length > 0
+                xrayNarrativeLines.length > 0
+                  ? [
+                      String(xrayParsed?.examType ?? xrayParsed?.testName ?? 'Chest Xray'),
+                      ...xrayNarrativeLines,
+                    ]
+                  : xrayResults.length > 0
                   ? [
                       String(
                         (xrayImport?.parsed_payload as { testName?: string } | null)?.testName ??
@@ -638,7 +657,7 @@ export async function GET(request: Request) {
                     ]
                   : [String((xrayImport?.parsed_payload as { testName?: string } | null)?.testName ?? 'Chest Xray')],
               impression:
-                (xrayImport?.parsed_payload as { impression?: string } | null)?.impression ??
+                xrayParsed?.impression ??
                 undefined,
             }
           : undefined,
@@ -655,6 +674,11 @@ export async function GET(request: Request) {
           license: '[LICENSE NUMBER]',
         },
       ],
+      xraySignature: {
+        name: '[RADIOLOGIST NAME]',
+        role: '[RADIOLOGIST ROLE]',
+        license: '[LICENSE NUMBER]',
+      },
     };
 
     return NextResponse.json({
@@ -831,7 +855,7 @@ export async function POST(request: Request) {
             : 'validated';
 
       return {
-        id: existingReport?.id,
+        id: existingReport?.id ?? createReportId(),
         lab_order_id: order.id,
         visit_id: queueEntry.visit_id,
         patient_id: queueEntry.patient_id,

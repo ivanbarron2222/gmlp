@@ -46,6 +46,11 @@ export interface LabReportTemplateData {
     role: string;
     license?: string;
   }>;
+  xraySignature?: {
+    name: string;
+    role: string;
+    license?: string;
+  };
 }
 
 function computeAgeFromBirthDate(birthDate: string) {
@@ -76,15 +81,20 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
   return (
     <div className={cn('lab-report mx-auto w-full max-w-[794px] bg-white font-serif text-slate-900', className)}>
       <div className="lab-report__sheet relative overflow-hidden border border-[#cfd8cf]">
-        <div className="lab-report__watermark absolute inset-0 flex items-center justify-center opacity-[0.04]">
-          <div className="lab-report__watermark-ring h-[470px] w-[470px] rounded-full border-[22px] border-[#0b65b1]" />
+        <div className="lab-report__watermark absolute inset-0 flex items-center justify-center opacity-[0.14]">
+          <img
+            src="/gmlp_logo.png"
+            alt=""
+            aria-hidden="true"
+            className="lab-report__watermark-image h-[220px] w-[220px] object-contain"
+          />
         </div>
 
         <div className="lab-report__content relative px-7 pb-6 pt-5">
           <header className="lab-report__header border-b-2 border-[#0b65b1] pb-3 text-center">
             <div className="lab-report__header-row flex items-start justify-between gap-4">
-              <div className="lab-report__logo mt-0.5 flex h-16 w-16 items-center justify-center rounded-full border-[3px] border-[#0b65b1] text-[9px] font-black leading-tight text-[#0b65b1]">
-                GMLP
+              <div className="lab-report__logo mt-0.5 flex h-16 w-16 items-center justify-center overflow-hidden">
+                <img src="/gmlp_logo.png" alt="GMLP logo" className="h-16 w-16 object-contain" />
               </div>
               <div className="lab-report__header-main flex-1">
                 <p className="lab-report__eyebrow text-[9px] font-semibold uppercase tracking-[0.28em] text-[#0b65b1]">
@@ -228,24 +238,15 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
             ))}
           </section>
 
-          {data.xray && (
-            <section className="lab-report__narrative mt-6 border border-slate-400 p-5">
-              <h2 className="lab-report__narrative-title text-center text-2xl font-black uppercase tracking-wide">
-                {data.xray.title}
-              </h2>
-              <div className="lab-report__narrative-body mt-5 space-y-2 text-[15px] leading-7">
-                {data.xray.body.map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
+          <footer className="lab-report__footer mt-6 grid gap-10 pt-5 text-center text-[12px] xl:grid-cols-2">
+            {data.signatures.map((signature) => (
+              <div key={signature.name} className="lab-report__signature mx-auto w-full max-w-[280px] border-t border-slate-600 pt-3">
+                <p className="lab-report__signature-name font-bold">{signature.name}</p>
+                <p className="lab-report__signature-role">{signature.role}</p>
+                {signature.license && <p className="lab-report__signature-license">{signature.license}</p>}
               </div>
-              {data.xray.impression && (
-                <div className="lab-report__impression mt-6">
-                  <p className="lab-report__impression-label text-xl font-black uppercase">Impression</p>
-                  <p className="lab-report__impression-text mt-2 text-lg font-bold uppercase">{data.xray.impression}</p>
-                </div>
-              )}
-            </section>
-          )}
+            ))}
+          </footer>
 
           {data.medicalExam && (
             <section className="lab-report__medical mt-6 border border-slate-400 p-5">
@@ -270,17 +271,90 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
             </section>
           )}
 
-          <footer className="lab-report__footer mt-6 grid gap-10 pt-5 text-center text-[12px] xl:grid-cols-2">
-            {data.signatures.map((signature) => (
-              <div key={signature.name} className="lab-report__signature mx-auto w-full max-w-[280px] border-t border-slate-600 pt-3">
-                <p className="lab-report__signature-name font-bold">{signature.name}</p>
-                <p className="lab-report__signature-role">{signature.role}</p>
-                {signature.license && <p className="lab-report__signature-license">{signature.license}</p>}
-              </div>
-            ))}
-          </footer>
         </div>
       </div>
+
+      {data.xray && (
+        <div className="lab-report__sheet lab-report__sheet--xray relative mt-6 overflow-hidden border border-[#cfd8cf]">
+        <div className="lab-report__watermark absolute inset-0 flex items-center justify-center opacity-[0.14]">
+          <img
+            src="/gmlp_logo.png"
+            alt=""
+            aria-hidden="true"
+            className="lab-report__watermark-image h-[220px] w-[220px] object-contain"
+          />
+        </div>
+
+          <div className="lab-report__content relative px-7 pb-6 pt-5">
+            <header className="lab-report__header border-b-2 border-[#0b65b1] pb-3 text-center">
+              <div className="lab-report__header-row flex items-start justify-between gap-4">
+                <div className="lab-report__logo mt-0.5 flex h-16 w-16 items-center justify-center overflow-hidden">
+                  <img src="/gmlp_logo.png" alt="GMLP logo" className="h-16 w-16 object-contain" />
+                </div>
+                <div className="lab-report__header-main flex-1">
+                  <p className="lab-report__eyebrow text-[9px] font-semibold uppercase tracking-[0.28em] text-[#0b65b1]">
+                    Globalife Medical Laboratory &amp; Polyclinic
+                  </p>
+                  <h1 className="lab-report__title mt-1 text-[28px] font-black uppercase tracking-tight text-[#0b65b1]">
+                    {data.reportTitle}
+                  </h1>
+                  <p className="lab-report__tagline mt-1 text-[15px] italic text-[#0b65b1]">
+                    Quality, Accuracy, Integrity &amp; Compassionate Service
+                  </p>
+                  <p className="lab-report__contact mt-2 text-[10px] leading-snug text-slate-600">
+                    General Trias Drive, Tejero, Rosario, Cavite
+                    <br />
+                    Tel. No. 046-437-9463 • Mobile 0928-668-2525 • Email globalife@example.com
+                  </p>
+                </div>
+                <div className="lab-report__qr flex w-[76px] shrink-0 flex-col items-center">
+                  {data.softCopyQrDataUrl ? (
+                    <img
+                      src={data.softCopyQrDataUrl}
+                      alt="Soft copy QR"
+                      className="h-[68px] w-[68px] border border-slate-300 bg-white p-1"
+                    />
+                  ) : (
+                    <div className="lab-report__qr-placeholder h-[68px] w-[68px] border border-dashed border-slate-300 bg-white" />
+                  )}
+                  <p className="lab-report__qr-label mt-1 text-center text-[8px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Soft Copy
+                  </p>
+                </div>
+              </div>
+            </header>
+
+            <section className="lab-report__narrative lab-report__narrative--xraypage mt-6 border border-slate-400 p-5">
+              <h2 className="lab-report__narrative-title text-center text-2xl font-black uppercase tracking-wide">
+                {data.xray.title}
+              </h2>
+              <div className="lab-report__narrative-body mt-5 space-y-2 text-[15px] leading-7">
+                {data.xray.body.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+              {data.xray.impression && (
+                <div className="lab-report__impression mt-6">
+                  <p className="lab-report__impression-label text-xl font-black uppercase">Impression</p>
+                  <p className="lab-report__impression-text mt-2 text-lg font-bold uppercase">{data.xray.impression}</p>
+                </div>
+              )}
+            </section>
+
+            {data.xraySignature && (
+              <footer className="lab-report__xray-footer mt-10 pt-5 text-center text-[12px]">
+                <div className="lab-report__signature mx-auto w-full max-w-[280px] border-t border-slate-600 pt-3">
+                  <p className="lab-report__signature-name font-bold">{data.xraySignature.name}</p>
+                  <p className="lab-report__signature-role">{data.xraySignature.role}</p>
+                  {data.xraySignature.license && (
+                    <p className="lab-report__signature-license">{data.xraySignature.license}</p>
+                  )}
+                </div>
+              </footer>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
