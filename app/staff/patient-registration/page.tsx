@@ -42,6 +42,9 @@ type DoctorOption = {
   id: string;
   fullName: string;
   email: string;
+  activeLoad: number;
+  pendingConsultations: number;
+  inProgressConsultations: number;
 };
 
 export default function PatientRegistrationPage() {
@@ -52,9 +55,16 @@ export default function PatientRegistrationPage() {
   const [pageError, setPageError] = useState('');
   const [queuedEntry, setQueuedEntry] = useState<QueueEntry | null>(null);
   const [queuedLabNumbers, setQueuedLabNumbers] = useState<string[]>([]);
+  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [companyMode, setCompanyMode] = useState<'select' | 'manual'>('select');
   const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [preferredDoctorId, setPreferredDoctorId] = useState<string | null>(null);
   const [preferredDoctorName, setPreferredDoctorName] = useState<string | null>(null);
+  const [preferredDoctorReason, setPreferredDoctorReason] = useState<'history' | 'load_balanced' | null>(null);
+  const [matchedPatientName, setMatchedPatientName] = useState<string | null>(null);
+  const [patientMatchSource, setPatientMatchSource] = useState<
+    'name_birthdate_contact' | 'name_birthdate' | 'email_birthdate' | null
+  >(null);
   const [formData, setFormData] = useState(defaultFormData);
 
   useEffect(() => {
@@ -67,6 +77,41 @@ export default function PatientRegistrationPage() {
       );
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch('/api/public/partner-companies', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Unable to load partner companies.');
+        }
+
+        return (await response.json()) as {
+          companies?: Array<{ companyName?: string }>;
+        };
+      })
+      .then((payload) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setCompanyOptions(
+          (payload.companies ?? [])
+            .map((company) => String(company.companyName ?? '').trim())
+            .filter(Boolean)
+        );
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCompanyOptions([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const requiresDoctorAssignment = formData.serviceNeeded === 'Check-Up';
 
   useEffect(() => {
@@ -74,6 +119,9 @@ export default function PatientRegistrationPage() {
       setDoctors([]);
       setPreferredDoctorId(null);
       setPreferredDoctorName(null);
+      setPreferredDoctorReason(null);
+      setMatchedPatientName(null);
+      setPatientMatchSource(null);
       setFormData((current) =>
         current.assignedDoctorId ? { ...current, assignedDoctorId: '' } : current
       );
@@ -89,6 +137,7 @@ export default function PatientRegistrationPage() {
         if (formData.lastName) params.set('lastName', formData.lastName);
         if (formData.birthDate) params.set('birthDate', formData.birthDate);
         if (formData.contactNumber) params.set('contactNumber', formData.contactNumber);
+        if (formData.emailAddress) params.set('emailAddress', formData.emailAddress);
 
         const response = await fetch(`/api/staff/doctors?${params.toString()}`, {
           cache: 'no-store',
@@ -97,6 +146,9 @@ export default function PatientRegistrationPage() {
           doctors?: DoctorOption[];
           preferredDoctorId?: string | null;
           preferredDoctorName?: string | null;
+          preferredDoctorReason?: 'history' | 'load_balanced' | null;
+          matchedPatientName?: string | null;
+          patientMatchSource?: 'name_birthdate_contact' | 'name_birthdate' | 'email_birthdate' | null;
           error?: string;
         };
 
@@ -111,6 +163,9 @@ export default function PatientRegistrationPage() {
         setDoctors(payload.doctors ?? []);
         setPreferredDoctorId(payload.preferredDoctorId ?? null);
         setPreferredDoctorName(payload.preferredDoctorName ?? null);
+        setPreferredDoctorReason(payload.preferredDoctorReason ?? null);
+        setMatchedPatientName(payload.matchedPatientName ?? null);
+        setPatientMatchSource(payload.patientMatchSource ?? null);
 
         if (payload.preferredDoctorId) {
           setFormData((current) =>
@@ -127,6 +182,9 @@ export default function PatientRegistrationPage() {
         setDoctors([]);
         setPreferredDoctorId(null);
         setPreferredDoctorName(null);
+        setPreferredDoctorReason(null);
+        setMatchedPatientName(null);
+        setPatientMatchSource(null);
         setPageError(error instanceof Error ? error.message : 'Unable to load doctors.');
       }
     };
@@ -142,11 +200,17 @@ export default function PatientRegistrationPage() {
     formData.lastName,
     formData.birthDate,
     formData.contactNumber,
+    formData.emailAddress,
   ]);
 
   const selectedRegistration = useMemo(
     () => pendingRegistrations.find((item) => item.id === selectedRegistrationId) ?? null,
     [pendingRegistrations, selectedRegistrationId]
+  );
+
+  const isKnownCompany = useMemo(
+    () => companyOptions.includes(formData.company),
+    [companyOptions, formData.company]
   );
 
   const handleInputChange = (
@@ -162,6 +226,7 @@ export default function PatientRegistrationPage() {
 
   const handleClear = () => {
     setFormData(defaultFormData);
+    setCompanyMode('select');
     setSelectedRegistrationId(null);
     setVerificationMessage('');
     setQueuedEntry(null);
@@ -173,6 +238,7 @@ export default function PatientRegistrationPage() {
   const handleOpenManualForm = () => {
     setSelectedRegistrationId(null);
     setFormData(defaultFormData);
+    setCompanyMode('select');
     setVerificationMessage('');
     setIsFormOpen(true);
   };
@@ -196,8 +262,28 @@ export default function PatientRegistrationPage() {
       notes: registration.notes,
       assignedDoctorId: '',
     });
+    setCompanyMode(
+      registration.company && !companyOptions.includes(registration.company) ? 'manual' : 'select'
+    );
     setVerificationMessage('');
     setIsFormOpen(true);
+  };
+
+  const handleCompanySelect = (value: string) => {
+    if (value === '__manual__') {
+      setCompanyMode('manual');
+      setFormData((current) => ({
+        ...current,
+        company: isKnownCompany ? '' : current.company,
+      }));
+      return;
+    }
+
+    setCompanyMode('select');
+    setFormData((current) => ({
+      ...current,
+      company: value,
+    }));
   };
 
   const handleVerifyAndQueue = async () => {
@@ -592,13 +678,28 @@ export default function PatientRegistrationPage() {
                       <label className="mb-2 block text-xs font-semibold text-muted-foreground">
                         COMPANY
                       </label>
-                      <Input
-                        name="company"
-                        placeholder="Company or employer"
-                        value={formData.company}
-                        onChange={handleInputChange}
-                        className="h-11"
-                      />
+                      <select
+                        value={companyMode === 'manual' ? '__manual__' : formData.company}
+                        onChange={(event) => handleCompanySelect(event.target.value)}
+                        className="h-11 w-full rounded-lg border border-border bg-muted px-3 text-foreground"
+                      >
+                        <option value="">Select a company</option>
+                        {companyOptions.map((company) => (
+                          <option key={company} value={company}>
+                            {company}
+                          </option>
+                        ))}
+                        <option value="__manual__">Other / Type manually</option>
+                      </select>
+                      {companyMode === 'manual' && (
+                        <Input
+                          name="company"
+                          placeholder="Company or employer"
+                          value={formData.company}
+                          onChange={handleInputChange}
+                          className="mt-3 h-11"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -680,13 +781,25 @@ export default function PatientRegistrationPage() {
                           <option value="">Select a doctor</option>
                           {doctors.map((doctor) => (
                             <option key={doctor.id} value={doctor.id}>
-                              {doctor.fullName}
+                              {doctor.fullName} ({doctor.activeLoad} active)
                             </option>
                           ))}
                         </select>
                         {preferredDoctorId && preferredDoctorName && (
                           <p className="mt-2 text-xs text-muted-foreground">
-                            Suggested based on previous doctor visit: {preferredDoctorName}
+                            {preferredDoctorReason === 'history'
+                              ? `Suggested based on previous doctor visit: ${preferredDoctorName}`
+                              : `Auto-selected by current doctor workload: ${preferredDoctorName}`}
+                          </p>
+                        )}
+                        {matchedPatientName && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Existing patient match found: {matchedPatientName}
+                            {patientMatchSource === 'name_birthdate_contact'
+                              ? ' using name, birthdate, and contact number.'
+                              : patientMatchSource === 'email_birthdate'
+                                ? ' using email address and birthdate.'
+                                : ' using name and birthdate.'}
                           </p>
                         )}
                       </div>

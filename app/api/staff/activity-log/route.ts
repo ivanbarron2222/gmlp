@@ -18,6 +18,15 @@ function toActorName(staffId: string | null | undefined, staffById: Map<string, 
   return staffById.get(staffId) ?? 'Staff';
 }
 
+function formatAmount(value: unknown) {
+  const amount = Number(value ?? 0);
+
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+  }).format(Number.isFinite(amount) ? amount : 0);
+}
+
 export async function GET(request: Request) {
   try {
     const { supabase } = await requireAdminStaffAccess(request);
@@ -25,11 +34,14 @@ export async function GET(request: Request) {
     const [
       staffResponse,
       queueResponse,
+      registrationResponse,
       importResponse,
+      invoiceResponse,
       paymentResponse,
       reportResponse,
       serviceResponse,
       companyResponse,
+      staffAccountResponse,
     ] = await Promise.all([
       supabase.from('staff_profiles').select('id, full_name'),
       supabase
@@ -44,6 +56,20 @@ export async function GET(request: Request) {
         .order('created_at', { ascending: false })
         .limit(100),
       supabase
+        .from('self_registrations')
+        .select(`
+          id,
+          created_at,
+          verified_at,
+          status,
+          company,
+          first_name,
+          middle_name,
+          last_name
+        `)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
         .from('machine_imports')
         .select(`
           id,
@@ -51,6 +77,22 @@ export async function GET(request: Request) {
           created_at,
           imported_by,
           source_order_id,
+          visits!inner(
+            queue_entries(queue_number),
+            patients(first_name, middle_name, last_name)
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('invoices')
+        .select(`
+          id,
+          invoice_number,
+          status,
+          total_amount,
+          created_at,
+          created_by,
           visits!inner(
             queue_entries(queue_number),
             patients(first_name, middle_name, last_name)
@@ -107,15 +149,23 @@ export async function GET(request: Request) {
         .select('id, company_name, updated_at')
         .order('updated_at', { ascending: false })
         .limit(50),
+      supabase
+        .from('staff_profiles')
+        .select('id, full_name, email, role, is_active, created_at, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(100),
     ]);
 
     if (staffResponse.error) throw staffResponse.error;
     if (queueResponse.error) throw queueResponse.error;
+    if (registrationResponse.error) throw registrationResponse.error;
     if (importResponse.error) throw importResponse.error;
+    if (invoiceResponse.error) throw invoiceResponse.error;
     if (paymentResponse.error) throw paymentResponse.error;
     if (reportResponse.error) throw reportResponse.error;
     if (serviceResponse.error) throw serviceResponse.error;
     if (companyResponse.error) throw companyResponse.error;
+    if (staffAccountResponse.error) throw staffAccountResponse.error;
 
     const staffById = new Map<string, string>(
       (staffResponse.data ?? []).map((staff) => [String(staff.id), String(staff.full_name ?? 'Staff')])
@@ -170,6 +220,33 @@ export async function GET(request: Request) {
       }
     }
 
+    for (const row of registrationResponse.data ?? []) {
+      const patientName = [row.first_name, row.middle_name, row.last_name]
+        .filter(Boolean)
+        .join(' ');
+      const company = row.company ? ` | ${String(row.company)}` : '';
+
+      items.push({
+        id: `registration-submitted-${row.id}`,
+        timestamp: String(row.created_at),
+        category: 'queue',
+        title: 'Self-registration submitted',
+        detail: `${patientName || 'Unknown Patient'}${company}`,
+        actor: 'Patient',
+      });
+
+      if (row.status === 'verified' && row.verified_at) {
+        items.push({
+          id: `registration-verified-${row.id}`,
+          timestamp: String(row.verified_at),
+          category: 'queue',
+          title: 'Self-registration verified',
+          detail: `${patientName || 'Unknown Patient'}${company}`,
+          actor: 'Front Desk',
+        });
+      }
+    }
+
     for (const row of importResponse.data ?? []) {
       const visit = Array.isArray(row.visits) ? row.visits[0] : row.visits;
       const patientName = getPatientName(visit?.patients);
@@ -181,6 +258,20 @@ export async function GET(request: Request) {
         title: 'Machine result uploaded',
         detail: `${queueNumber} | ${patientName} | ${String(row.lane).replace('_', ' ').toUpperCase()} | ${String(row.source_order_id ?? 'No order id')}`,
         actor: toActorName(String(row.imported_by ?? ''), staffById),
+      });
+    }
+
+    for (const row of invoiceResponse.data ?? []) {
+      const visit = Array.isArray(row.visits) ? row.visits[0] : row.visits;
+      const patientName = getPatientName(visit?.patients);
+      const queueNumber = getQueueNumber(visit?.queue_entries);
+      items.push({
+        id: `invoice-${row.id}`,
+        timestamp: String(row.created_at),
+        category: 'billing',
+        title: 'Invoice prepared',
+        detail: `${String(row.invoice_number ?? 'No invoice number')} | ${queueNumber} | ${patientName} | ${formatAmount(row.total_amount)}`,
+        actor: toActorName(String(row.created_by ?? ''), staffById),
       });
     }
 
@@ -271,6 +362,32 @@ export async function GET(request: Request) {
         detail: String(row.company_name ?? 'Partner Company'),
         actor: 'Admin',
       });
+    }
+
+    for (const row of staffAccountResponse.data ?? []) {
+      const createdTimestamp = String(row.created_at ?? '');
+      const updatedTimestamp = String(row.updated_at ?? '');
+      const context = `${String(row.full_name ?? 'Staff')} | ${String(row.email ?? 'No email')} | ${String(row.role ?? 'No role')}`;
+
+      items.push({
+        id: `staff-created-${row.id}`,
+        timestamp: createdTimestamp,
+        category: 'admin',
+        title: row.is_active ? 'Staff account created' : 'Staff account pending activation',
+        detail: context,
+        actor: 'Admin',
+      });
+
+      if (createdTimestamp && updatedTimestamp && updatedTimestamp !== createdTimestamp) {
+        items.push({
+          id: `staff-updated-${row.id}`,
+          timestamp: updatedTimestamp,
+          category: 'admin',
+          title: row.is_active ? 'Staff account updated' : 'Staff account deactivated',
+          detail: context,
+          actor: 'Admin',
+        });
+      }
     }
 
     items.sort((left, right) => right.timestamp.localeCompare(left.timestamp));

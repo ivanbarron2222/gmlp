@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,6 +14,8 @@ import {
 } from '@/lib/registration-store';
 
 export default function PatientRegistrationPage() {
+  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [companyMode, setCompanyMode] = useState<'select' | 'manual'>('select');
   const [formData, setFormData] = useState({
     firstName: '',
     middleName: '',
@@ -34,6 +36,41 @@ export default function PatientRegistrationPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch('/api/public/partner-companies', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Unable to load partner companies.');
+        }
+
+        return (await response.json()) as {
+          companies?: Array<{ companyName?: string }>;
+        };
+      })
+      .then((payload) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const nextOptions = (payload.companies ?? [])
+          .map((company) => String(company.companyName ?? '').trim())
+          .filter(Boolean);
+
+        setCompanyOptions(nextOptions);
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCompanyOptions([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
@@ -49,6 +86,28 @@ export default function PatientRegistrationPage() {
     setFormData((prev) => ({
       ...prev,
       gender,
+    }));
+  };
+
+  const isKnownCompany = useMemo(
+    () => companyOptions.includes(formData.company),
+    [companyOptions, formData.company]
+  );
+
+  const handleCompanySelect = (value: string) => {
+    if (value === '__manual__') {
+      setCompanyMode('manual');
+      setFormData((prev) => ({
+        ...prev,
+        company: isKnownCompany ? '' : prev.company,
+      }));
+      return;
+    }
+
+    setCompanyMode('select');
+    setFormData((prev) => ({
+      ...prev,
+      company: value,
     }));
   };
 
@@ -186,14 +245,34 @@ export default function PatientRegistrationPage() {
                 <label className="text-xs font-semibold text-muted-foreground mb-2 block">
                   COMPANY
                 </label>
-                <Input
-                  type="text"
-                  name="company"
-                  placeholder="Enter your company"
-                  value={formData.company}
-                  onChange={handleInputChange}
-                  className="h-12"
-                />
+                <select
+                  value={companyMode === 'manual' ? '__manual__' : formData.company}
+                  onChange={(event) => handleCompanySelect(event.target.value)}
+                  className="h-12 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  <option value="">Select a company</option>
+                  {companyOptions.map((company) => (
+                    <option key={company} value={company}>
+                      {company}
+                    </option>
+                  ))}
+                  <option value="__manual__">Other / Type manually</option>
+                </select>
+                {companyMode === 'manual' && (
+                  <Input
+                    type="text"
+                    name="company"
+                    placeholder="Enter your company"
+                    value={formData.company}
+                    onChange={handleInputChange}
+                    className="mt-3 h-12"
+                  />
+                )}
+                {companyMode === 'select' && companyOptions.length > 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Choose a registered partner company, or switch to manual entry if needed.
+                  </p>
+                )}
               </div>
 
               <div>

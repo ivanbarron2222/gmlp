@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { findMatchingPatient, getDoctorAssignmentSuggestion } from '@/lib/doctor-assignment';
 
 type ServiceNeeded = 'Pre-Employment' | 'Check-Up' | 'Lab';
 type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG' | '';
@@ -255,17 +256,29 @@ async function findOrCreatePatient(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   formData: VerifyRegistrationRequest['formData']
 ) {
-  const { data: existingPatient, error: selectError } = await supabase
-    .from('patients')
-    .select('*')
-    .eq('first_name', formData.firstName)
-    .eq('last_name', formData.lastName)
-    .eq('birth_date', formData.birthDate)
-    .eq('contact_number', formData.contactNumber)
-    .maybeSingle();
+  const matchedPatient = await findMatchingPatient(supabase, {
+    firstName: formData.firstName,
+    middleName: formData.middleName,
+    lastName: formData.lastName,
+    birthDate: formData.birthDate,
+    contactNumber: formData.contactNumber,
+    emailAddress: formData.emailAddress,
+  });
 
-  if (selectError) {
-    throw selectError;
+  let existingPatient: Record<string, unknown> | null = null;
+
+  if (matchedPatient?.id) {
+    const { data: patientRow, error: selectError } = await supabase
+      .from('patients')
+      .select('*')
+      .eq('id', matchedPatient.id)
+      .maybeSingle();
+
+    if (selectError) {
+      throw selectError;
+    }
+
+    existingPatient = patientRow;
   }
 
   if (existingPatient) {
@@ -324,6 +337,19 @@ export async function POST(request: Request) {
     const body = (await request.json()) as VerifyRegistrationRequest;
     const { registrationId, formData } = body;
     const supabase = getSupabaseAdminClient();
+    let assignedDoctorId = formData.assignedDoctorId || null;
+
+    if (formData.serviceNeeded === 'Check-Up' && !assignedDoctorId) {
+      const assignment = await getDoctorAssignmentSuggestion(supabase, {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        birthDate: formData.birthDate,
+        contactNumber: formData.contactNumber,
+        emailAddress: formData.emailAddress,
+      });
+
+      assignedDoctorId = assignment.preferredDoctorId;
+    }
 
     const patient = await findOrCreatePatient(supabase, formData);
 
@@ -386,7 +412,7 @@ export async function POST(request: Request) {
       const { error: consultationError } = await supabase.from('consultations').insert({
         visit_id: visit.id,
         queue_entry_id: queueEntry.id,
-        doctor_id: formData.assignedDoctorId || null,
+        doctor_id: assignedDoctorId,
         status: 'pending',
       });
 
@@ -504,11 +530,11 @@ export async function POST(request: Request) {
       .join(' ');
     let assignedDoctorName: string | null = null;
 
-    if (formData.assignedDoctorId) {
+    if (assignedDoctorId) {
       const { data: doctorProfile, error: doctorProfileError } = await supabase
         .from('staff_profiles')
         .select('full_name')
-        .eq('id', formData.assignedDoctorId)
+        .eq('id', assignedDoctorId)
         .maybeSingle();
 
       if (doctorProfileError) {
@@ -547,7 +573,7 @@ export async function POST(request: Request) {
         counter: 'General Intake',
         status: 'waiting',
         createdAt: queueEntry.created_at,
-        assignedDoctorId: formData.assignedDoctorId || undefined,
+        assignedDoctorId: assignedDoctorId || undefined,
         assignedDoctorName: assignedDoctorName || undefined,
       },
       labNumbers: createdLabNumbers,
