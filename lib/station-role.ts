@@ -1,4 +1,5 @@
 import { QueueEntry, QueueLane } from '@/lib/queue-store';
+import { sanitizeActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 import { sanitizeAllowedModules, type StaffModulePath } from '@/lib/staff-modules';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
@@ -34,6 +35,7 @@ export interface StaffProfileSession {
   fullName: string;
   role: StationRole;
   allowedModules: StaffModulePath[];
+  actionPermissions: ActionPermission[];
 }
 
 export function getRoleLabel(role: StationRole) {
@@ -162,7 +164,7 @@ export async function syncStaffSessionFromSupabase() {
 
   const { data, error } = await supabase
     .from('staff_profiles')
-    .select('id, email, full_name, role, is_active, allowed_modules')
+    .select('id, email, full_name, role, is_active, allowed_modules, action_permissions')
     .eq('id', session.user.id)
     .single();
 
@@ -190,6 +192,7 @@ export async function syncStaffSessionFromSupabase() {
     fullName: String(data.full_name ?? ''),
     role: stationRole,
     allowedModules: sanitizeAllowedModules(data.allowed_modules),
+    actionPermissions: sanitizeActionPermissions(data.action_permissions),
   });
 
   return {
@@ -198,6 +201,7 @@ export async function syncStaffSessionFromSupabase() {
     fullName: String(data.full_name ?? ''),
     role: stationRole,
     allowedModules: sanitizeAllowedModules(data.allowed_modules),
+    actionPermissions: sanitizeActionPermissions(data.action_permissions),
   } satisfies StaffProfileSession;
 }
 
@@ -276,5 +280,5 @@ export function resolveScanRedirect(role: StationRole, entry: QueueEntry) {
     return `/staff/result-encoding?queueId=${entry.id}&lane=${encodeURIComponent(lane)}`;
   }
 
-  return `/staff/lab-orders?queueId=${entry.id}&lane=${encodeURIComponent(lane)}`;
+  return `/staff/lab-orders?queueId=${entry.id}&lane=${encodeURIComponent(lane)}&mode=station`;
 }

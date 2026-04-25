@@ -3,6 +3,7 @@ import type { StationRole } from '@/lib/station-role';
 export type StaffModulePath =
   | '/dashboard'
   | '/staff/activity-log'
+  | '/staff/doctors'
   | '/staff/patient-registration'
   | '/staff/queue'
   | '/staff/cashier'
@@ -16,6 +17,7 @@ export type StaffModulePath =
 export const moduleCatalog: Array<{ label: string; href: StaffModulePath }> = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Activity Log', href: '/staff/activity-log' },
+  { label: 'Doctors', href: '/staff/doctors' },
   { label: 'Patient Registration', href: '/staff/patient-registration' },
   { label: 'Queue Management', href: '/staff/queue' },
   { label: 'Cashier / Billing', href: '/staff/cashier' },
@@ -32,7 +34,7 @@ export function getDefaultAllowedModules(role: StationRole): StaffModulePath[] {
     case 'admin':
       return moduleCatalog.map((moduleItem) => moduleItem.href);
     case 'nurse':
-      return ['/dashboard', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'];
+      return ['/dashboard', '/staff/doctors', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'];
     case 'blood-test':
     case 'drug-test':
     case 'xray':

@@ -14,6 +14,10 @@ type ActionBody =
   | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'finish_step'; queueId: string }
+  | { action: 'mark_missed'; queueId: string }
+  | { action: 'require_requeue'; queueId: string }
+  | { action: 'requeue'; queueId: string }
+  | { action: 'acknowledge_response'; queueId: string }
   | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> };
 
@@ -46,6 +50,13 @@ async function getNextLabOrderNumber(supabase: ReturnType<typeof getSupabaseAdmi
 }
 
 async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient>) {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
   const { data, error } = await supabase
     .from('queue_entries')
     .select(`
@@ -59,12 +70,18 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
       priority_lane,
       created_at,
       now_serving_at,
+      missed_at,
+      requeue_required_at,
+      notification_ping_count,
+      last_ping_at,
+      response_at,
       completed_at,
       visit_id,
       patient_id,
-      patients!inner(first_name, middle_name, last_name),
+      patients!inner(first_name, middle_name, last_name, contact_number, email_address),
       queue_steps(id, lane, status, sort_order)
     `)
+    .eq('queue_date', today)
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -92,14 +109,14 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
       .from('consultations')
       .select(`
         visit_id,
-        doctor_id,
-        staff_profiles:doctor_id (
+        doctor_directory_id,
+        doctors:doctor_directory_id (
           full_name
         ),
         created_at
       `)
       .in('visit_id', visitIds)
-      .not('doctor_id', 'is', null)
+      .not('doctor_directory_id', 'is', null)
       .order('created_at', { ascending: false });
 
     if (consultationsError) {
@@ -109,16 +126,16 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
     for (const consultation of consultationsData ?? []) {
       const visitId = String(consultation.visit_id ?? '');
 
-      if (!visitId || doctorByVisitId.has(visitId) || !consultation.doctor_id) {
+      if (!visitId || doctorByVisitId.has(visitId) || !consultation.doctor_directory_id) {
         continue;
       }
 
-      const doctorProfile = Array.isArray(consultation.staff_profiles)
-        ? consultation.staff_profiles[0]
-        : consultation.staff_profiles;
+      const doctorProfile = Array.isArray(consultation.doctors)
+        ? consultation.doctors[0]
+        : consultation.doctors;
 
       doctorByVisitId.set(visitId, {
-        id: String(consultation.doctor_id),
+        id: String(consultation.doctor_directory_id),
         name: String(doctorProfile?.full_name ?? ''),
       });
     }
@@ -203,6 +220,10 @@ async function completeCurrentStepAndQueue(
         current_lane: 'general',
         counter_name: row.priority_lane ? 'Priority Lane' : 'General Intake',
         queue_status: 'waiting',
+        now_serving_at: null,
+        notification_ping_count: 0,
+        last_ping_at: null,
+        response_at: null,
       })
       .eq('id', row.id);
 
@@ -225,15 +246,7 @@ function matchesDoctorAssignment(
   row: Awaited<ReturnType<typeof fetchQueueRows>>[number],
   actorStaffId?: string
 ) {
-  if (!actorStaffId) {
-    return true;
-  }
-
-  if (!row.assigned_doctor_id) {
-    return true;
-  }
-
-  return row.assigned_doctor_id === actorStaffId;
+  return true;
 }
 
 export async function POST(request: Request) {
@@ -370,6 +383,9 @@ export async function POST(request: Request) {
           .update({
             queue_status: 'now_serving',
             now_serving_at: now,
+            notification_ping_count: 0,
+            last_ping_at: null,
+            response_at: null,
           })
           .eq('id', nextWaiting.id);
 
@@ -423,9 +439,12 @@ export async function POST(request: Request) {
         .update({
           current_lane: dbLane,
           counter_name: uiLaneLabel(lane, row.priority_lane),
-          queue_status: 'now_serving',
-          now_serving_at: now,
-        })
+            queue_status: 'now_serving',
+            now_serving_at: now,
+            notification_ping_count: 0,
+            last_ping_at: null,
+            response_at: null,
+          })
         .eq('id', row.id);
 
       if (error) {
@@ -475,6 +494,115 @@ export async function POST(request: Request) {
         return respondWithQueue(supabase);
       }
       await completeCurrentStepAndQueue(supabase, row);
+
+      return respondWithQueue(supabase);
+    }
+
+    if (body.action === 'acknowledge_response') {
+      const row = await fetchQueueRowById(supabase, body.queueId);
+
+      if (!row) {
+        return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
+      }
+
+      const { error } = await supabase
+        .from('queue_entries')
+        .update({ response_at: new Date().toISOString() })
+        .eq('id', row.id);
+
+      if (error) {
+        throw error;
+      }
+
+      return respondWithQueue(supabase);
+    }
+
+    if (body.action === 'mark_missed' || body.action === 'require_requeue') {
+      const row = await fetchQueueRowById(supabase, body.queueId);
+
+      if (!row) {
+        return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
+      }
+
+      const now = new Date().toISOString();
+      const currentStep = row.queue_steps.find((step) => step.lane === row.current_lane);
+
+      if (currentStep?.status === 'serving') {
+        const { error: stepError } = await supabase
+          .from('queue_steps')
+          .update({ status: 'pending', started_at: null })
+          .eq('id', currentStep.id);
+
+        if (stepError) {
+          throw stepError;
+        }
+      }
+
+      const queueStatus = body.action === 'mark_missed' ? 'missed' : 'requeue_required';
+      const { error } = await supabase
+        .from('queue_entries')
+        .update({
+          queue_status: queueStatus,
+          missed_at: now,
+          requeue_required_at: body.action === 'require_requeue' ? now : null,
+          response_at: null,
+        })
+        .eq('id', row.id);
+
+      if (error) {
+        throw error;
+      }
+
+      return respondWithQueue(supabase);
+    }
+
+    if (body.action === 'requeue') {
+      const row = await fetchQueueRowById(supabase, body.queueId);
+
+      if (!row) {
+        return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
+      }
+
+      const currentStep = row.queue_steps.find((step) => step.lane === row.current_lane);
+
+      if (currentStep?.status === 'serving') {
+        const { error: stepError } = await supabase
+          .from('queue_steps')
+          .update({ status: 'pending', started_at: null })
+          .eq('id', currentStep.id);
+
+        if (stepError) {
+          throw stepError;
+        }
+      }
+
+      const { error } = await supabase
+        .from('queue_entries')
+        .update({
+          current_lane: 'general',
+          counter_name: row.priority_lane ? 'Priority Lane' : 'General Intake',
+          queue_status: 'waiting',
+          now_serving_at: null,
+          missed_at: null,
+          requeue_required_at: null,
+          notification_ping_count: 0,
+          last_ping_at: null,
+          response_at: null,
+        })
+        .eq('id', row.id);
+
+      if (error) {
+        throw error;
+      }
+
+      const { error: visitError } = await supabase
+        .from('visits')
+        .update({ current_lane: 'general' })
+        .eq('id', row.visit_id);
+
+      if (visitError) {
+        throw visitError;
+      }
 
       return respondWithQueue(supabase);
     }

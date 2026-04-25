@@ -22,6 +22,8 @@ export async function GET(
         priority_lane,
         created_at,
         now_serving_at,
+        missed_at,
+        requeue_required_at,
         completed_at,
         visit_id,
         patients!inner(first_name, middle_name, last_name),
@@ -42,13 +44,13 @@ export async function GET(
       const { data: consultationData, error: consultationError } = await supabase
         .from('consultations')
         .select(`
-          doctor_id,
-          staff_profiles:doctor_id (
+          doctor_directory_id,
+          doctors:doctor_directory_id (
             full_name
           )
         `)
         .eq('visit_id', row.visit_id)
-        .not('doctor_id', 'is', null)
+        .not('doctor_directory_id', 'is', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -57,11 +59,11 @@ export async function GET(
         throw consultationError;
       }
 
-      if (consultationData?.doctor_id) {
-        assignedDoctorId = String(consultationData.doctor_id);
-        const doctorProfile = Array.isArray(consultationData.staff_profiles)
-          ? consultationData.staff_profiles[0]
-          : consultationData.staff_profiles;
+      if (consultationData?.doctor_directory_id) {
+        assignedDoctorId = String(consultationData.doctor_directory_id);
+        const doctorProfile = Array.isArray(consultationData.doctors)
+          ? consultationData.doctors[0]
+          : consultationData.doctors;
         assignedDoctorName = String(doctorProfile?.full_name ?? '');
       }
     }

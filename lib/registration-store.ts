@@ -1,12 +1,11 @@
 'use client';
 
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
-
 export type RegistrationService = 'Pre-Employment' | 'Check-Up' | 'Lab';
 export type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG';
 
 export interface PendingRegistration {
   id: string;
+  registrationCode: string;
   submittedAt: string;
   firstName: string;
   middleName: string;
@@ -21,7 +20,24 @@ export interface PendingRegistration {
   province: string;
   serviceNeeded: RegistrationService;
   requestedLabService: RequestedLabService | '';
+  selectedServiceCodes: string[];
   notes: string;
+  status?: string;
+  queueEntry?: {
+    id: string;
+    queueNumber: string;
+    patientName: string;
+    serviceType: 'PRE-EMPLOYMENT' | 'CHECK-UP' | 'LAB';
+    requestedLabLane?: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG';
+    currentLane: 'GENERAL' | 'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY' | 'ECG';
+    pendingLanes: Array<'GENERAL' | 'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY' | 'ECG'>;
+    completedLanes: Array<'GENERAL' | 'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY' | 'ECG'>;
+    priority: boolean;
+    counter: string;
+    status: 'waiting' | 'serving' | 'missed' | 'requeue_required' | 'completed';
+    createdAt: string;
+  } | null;
+  labNumbers?: string[];
 }
 
 export interface RegistrationFormInput {
@@ -38,6 +54,7 @@ export interface RegistrationFormInput {
   province: string;
   serviceNeeded: RegistrationService;
   requestedLabService: RequestedLabService | '';
+  selectedServiceCodes: string[];
   notes: string;
 }
 
@@ -46,6 +63,7 @@ const STORAGE_KEY = 'gmlp-pending-registrations-v1';
 function mapDbRegistration(row: Record<string, unknown>): PendingRegistration {
   return {
     id: String(row.id),
+    registrationCode: String(row.registration_code ?? ''),
     submittedAt: String(row.created_at),
     firstName: String(row.first_name ?? ''),
     middleName: String(row.middle_name ?? ''),
@@ -74,38 +92,14 @@ function mapDbRegistration(row: Record<string, unknown>): PendingRegistration {
             : row.requested_lab_service === 'ecg'
               ? 'ECG'
             : '',
+    selectedServiceCodes: Array.isArray(row.requested_service_codes)
+      ? row.requested_service_codes.map((code) => String(code))
+      : [],
     notes: String(row.notes ?? ''),
+    status: String(row.status ?? ''),
+    queueEntry: null,
+    labNumbers: [],
   };
-}
-
-function toDbService(service: RegistrationService) {
-  switch (service) {
-    case 'Pre-Employment':
-      return 'pre_employment';
-    case 'Check-Up':
-      return 'check_up';
-    case 'Lab':
-      return 'lab';
-  }
-}
-
-function toDbLabService(service: RequestedLabService | '') {
-  switch (service) {
-    case 'Blood Test':
-      return 'blood_test';
-    case 'Drug Test':
-      return 'drug_test';
-    case 'Xray':
-      return 'xray';
-    case 'ECG':
-      return 'ecg';
-    default:
-      return null;
-  }
-}
-
-function buildRegistrationCode() {
-  return `REG-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
 
 export function readPendingRegistrations(): PendingRegistration[] {
@@ -138,50 +132,23 @@ export function writePendingRegistrations(registrations: PendingRegistration[]) 
 }
 
 export async function addPendingRegistration(registration: RegistrationFormInput) {
-  const supabase = getSupabaseBrowserClient();
+  const response = await fetch('/api/public/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(registration),
+  });
 
-  if (!supabase) {
-    const nextRegistration: PendingRegistration = {
-      ...registration,
-      id: `reg-${Date.now()}`,
-      submittedAt: new Date().toISOString(),
-    };
+  const payload = (await response.json().catch(() => null)) as
+    | { registration?: PendingRegistration; error?: string }
+    | null;
 
-    writePendingRegistrations([nextRegistration, ...readPendingRegistrations()]);
-    return nextRegistration;
+  if (!response.ok || !payload?.registration) {
+    throw new Error(payload?.error ?? 'Unable to submit registration right now.');
   }
 
-  const submittedAt = new Date().toISOString();
-
-  const { error } = await supabase
-    .from('self_registrations')
-    .insert({
-      registration_code: buildRegistrationCode(),
-      first_name: registration.firstName,
-      middle_name: registration.middleName || null,
-      last_name: registration.lastName,
-      company: registration.company || null,
-      birth_date: registration.birthDate,
-      gender: registration.gender.toLowerCase(),
-      contact_number: registration.contactNumber || null,
-      email_address: registration.emailAddress || null,
-      street_address: registration.streetAddress || null,
-      city: registration.city || null,
-      province: registration.province || null,
-      service_needed: toDbService(registration.serviceNeeded),
-      requested_lab_service: toDbLabService(registration.requestedLabService),
-      notes: registration.notes || null,
-    });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return {
-    id: `submitted-${Date.now()}`,
-    submittedAt,
-    ...registration,
-  } satisfies PendingRegistration;
+  return payload.registration;
 }
 
 export async function fetchPendingRegistrations() {

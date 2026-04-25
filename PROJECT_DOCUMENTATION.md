@@ -130,7 +130,7 @@ Queue numbering is service-prefixed:
 
 The system follows defined service logic:
 
-- `Pre-Employment` patients must complete `BLOOD TEST`, `DRUG TEST`, `DOCTOR`, `XRAY`, and `ECG`
+- `Pre-Employment` patients must complete `BLOOD TEST`, `DRUG TEST`, `XRAY`, and `DOCTOR`
 - `Check-Up` patients go to `DOCTOR` first, then may receive referrals to lab or imaging services
 - `Lab` patients go directly to the selected lab service lane
 - `PRIORITY LANE` patients are handled ahead of regular `GENERAL` entries

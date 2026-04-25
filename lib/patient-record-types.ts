@@ -22,6 +22,13 @@ export interface MachineResultImport {
   results: MachineResultItem[];
 }
 
+export interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  title: string;
+  detail: string;
+}
+
 export interface VisitRecord {
   id: string;
   queueEntryId: string;
@@ -40,6 +47,7 @@ export interface VisitRecord {
   updatedAt: string;
   billing: BillingRecord | null;
   machineResults: MachineResultImport[];
+  timelineEvents: TimelineEvent[];
 }
 
 export interface PatientRecord {

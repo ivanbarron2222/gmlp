@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { requireStaffContext } from '@/lib/supabase/admin-auth';
 
-type DbLane = 'blood_test' | 'drug_test' | 'xray';
-type UiLane = 'BLOOD TEST' | 'DRUG TEST' | 'XRAY';
+type DbLane = 'blood_test' | 'drug_test' | 'xray' | 'ecg';
+type UiLane = 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG';
 type BloodTestCategory = 'hematology' | 'urinalysis';
 
 type LabOrderItemRow = {
@@ -33,6 +34,8 @@ function toDbLane(lane: string | null): DbLane | null {
       return 'drug_test';
     case 'XRAY':
       return 'xray';
+    case 'ECG':
+      return 'ecg';
     default:
       return null;
   }
@@ -44,6 +47,8 @@ function toUiLane(lane: string): UiLane {
       return 'BLOOD TEST';
     case 'drug_test':
       return 'DRUG TEST';
+    case 'ecg':
+      return 'ECG';
     default:
       return 'XRAY';
   }
@@ -284,14 +289,23 @@ async function resolveLabOrderItem(
         : 'CBC'
       : lane === 'drug_test'
         ? 'DRUG'
-        : 'XRAY';
+        : lane === 'ecg'
+          ? 'ECG'
+          : 'XRAY';
 
   const { data: createdItem, error: createItemError } = await supabase
     .from('lab_order_items')
     .insert({
       lab_order_id: latestOrder.id,
       service_lane: lane,
-      requested_lab_service: lane === 'xray' ? 'xray' : lane === 'drug_test' ? 'drug_test' : 'blood_test',
+      requested_lab_service:
+        lane === 'xray'
+          ? 'xray'
+          : lane === 'drug_test'
+            ? 'drug_test'
+            : lane === 'ecg'
+              ? 'ecg'
+              : 'blood_test',
       test_code: `${testCodeBase}-${Date.now()}`,
       test_name: rawTestName,
       sample_id: `SMP-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -381,6 +395,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const context = await requireStaffContext(request);
     const body = (await request.json()) as {
       queueId?: string;
       lane?: UiLane;
@@ -432,6 +447,7 @@ export async function POST(request: Request) {
         source_order_id: body.parsedImport.orderId || null,
         raw_content: body.rawText,
         parsed_payload: body.parsedImport,
+        imported_by: context.userId,
         accepted_at: new Date().toISOString(),
       })
       .select()

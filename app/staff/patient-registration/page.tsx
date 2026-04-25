@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { Printer } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -18,7 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchPendingRegistrations, PendingRegistration } from '@/lib/registration-store';
 import { createPatientVisitRecord } from '@/lib/patient-records-store';
-import { getQueueVisitPath, QueueEntry } from '@/lib/queue-store';
+import { getQueueScanPath, getQueueVisitPath, QueueEntry } from '@/lib/queue-store';
 
 const defaultFormData = {
   firstName: '',
@@ -34,6 +35,7 @@ const defaultFormData = {
   province: '',
   serviceNeeded: 'Check-Up',
   requestedLabService: '',
+  selectedServiceCodes: [] as string[],
   assignedDoctorId: '',
   notes: '',
 };
@@ -41,7 +43,7 @@ const defaultFormData = {
 type DoctorOption = {
   id: string;
   fullName: string;
-  email: string;
+  email?: string;
   activeLoad: number;
   pendingConsultations: number;
   inProgressConsultations: number;
@@ -259,6 +261,7 @@ export default function PatientRegistrationPage() {
       province: registration.province,
       serviceNeeded: registration.serviceNeeded,
       requestedLabService: registration.requestedLabService,
+      selectedServiceCodes: registration.selectedServiceCodes,
       notes: registration.notes,
       assignedDoctorId: '',
     });
@@ -459,6 +462,73 @@ export default function PatientRegistrationPage() {
     printWindow.document.close();
   };
 
+  const handlePrintRegisteredSlip = async (registration: PendingRegistration) => {
+    const queueEntry = registration.queueEntry;
+    if (!queueEntry || typeof window === 'undefined') {
+      return;
+    }
+
+    const fullName = [registration.firstName, registration.middleName, registration.lastName]
+      .filter(Boolean)
+      .join(' ');
+    const scanUrl = new URL(getQueueScanPath(queueEntry.id), window.location.origin).toString();
+    const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 1, width: 160 }).catch(() => '');
+    const printWindow = window.open('', '_blank', 'width=420,height=760');
+
+    if (!printWindow) {
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Queue Slip ${queueEntry.queueNumber}</title>
+          <style>
+            body { margin: 0; padding: 24px; font-family: Arial, sans-serif; color: #0f172a; }
+            .slip { border: 1px solid #cbd5e1; border-radius: 18px; padding: 24px; max-width: 340px; margin: 0 auto; text-align: center; }
+            .brand { font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: #0b65b1; }
+            .title { margin-top: 10px; font-size: 24px; font-weight: 700; }
+            .queue { margin-top: 10px; font-size: 52px; font-weight: 900; color: #0b65b1; line-height: 1; }
+            .meta { margin-top: 16px; font-size: 14px; line-height: 1.6; color: #475569; }
+            .meta strong { color: #0f172a; }
+            .qr { margin: 16px auto 0; width: 150px; height: 150px; }
+            .note { margin-top: 14px; font-size: 12px; color: #64748b; }
+            @page { size: auto; margin: 12mm; }
+          </style>
+        </head>
+        <body>
+          <div class="slip">
+            <div class="brand">Globalife Medical Laboratory &amp; Polyclinic</div>
+            <div class="title">Queue Slip</div>
+            <div class="queue">${queueEntry.queueNumber}</div>
+            <div class="meta">
+              <div><strong>${fullName}</strong></div>
+              <div>${registration.serviceNeeded}</div>
+              <div>Pending: ${queueEntry.pendingLanes.join(', ') || 'N/A'}</div>
+              <div>${new Date(queueEntry.createdAt).toLocaleString()}</div>
+            </div>
+            ${qrDataUrl ? `<img class="qr" src="${qrDataUrl}" alt="Queue QR code" />` : ''}
+            <div class="note">Scan QR to open the patient's active visit/profile.</div>
+          </div>
+          <script>
+            window.onload = function () {
+              window.print();
+              window.onafterprint = function () { window.close(); };
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const formatServiceCode = (code: string) =>
+    code
+      .replace(/^svc-/i, '')
+      .replaceAll('-', ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
   return (
     <PageLayout>
       <div className="px-8 py-8">
@@ -466,7 +536,7 @@ export default function PatientRegistrationPage() {
           <div>
             <h1 className="text-3xl font-bold">Patient Registration</h1>
             <p className="mt-2 text-muted-foreground">
-              Review self-registrations, verify patient details, and create the active queue record from front desk intake.
+              Review registered patients, print queue slips, and open active visits from front desk intake.
             </p>
           </div>
           <Button onClick={handleOpenManualForm}>Open Registration Form</Button>
@@ -475,60 +545,107 @@ export default function PatientRegistrationPage() {
         <Card className="mt-8 p-6 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold">Pending Self-Registrations</h2>
+              <h2 className="text-lg font-bold">Registered Patients Today</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                New submissions from `/register` appear here for front desk verification.
+                New `/register` submissions are automatically queued and appear here for slip printing.
               </p>
             </div>
             <div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
-              {pendingRegistrations.length} pending
+              {pendingRegistrations.length} registered
             </div>
           </div>
 
-          <div className="mt-6 grid gap-3 xl:grid-cols-2">
+          <div className="mt-6 overflow-hidden rounded-xl border border-border">
             {pendingRegistrations.length > 0 ? (
-              pendingRegistrations.map((registration) => (
-                <div key={registration.id} className="rounded-xl border border-border bg-background p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold">
-                        {[registration.firstName, registration.middleName, registration.lastName]
-                          .filter(Boolean)
-                          .join(' ')}
-                      </p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {registration.serviceNeeded}
-                        {registration.requestedLabService ? ` - ${registration.requestedLabService}` : ''}
-                      </p>
-                      {registration.company && (
-                        <p className="mt-1 text-xs text-muted-foreground">{registration.company}</p>
-                      )}
-                    </div>
-                    <Button variant="outline" onClick={() => handleLoadRegistration(registration)}>
-                      Load Form
-                    </Button>
-                  </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] text-left text-sm">
+                  <thead className="border-b bg-muted/50 text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Queue</th>
+                      <th className="px-4 py-3 font-semibold">Patient</th>
+                      <th className="px-4 py-3 font-semibold">Service</th>
+                      <th className="px-4 py-3 font-semibold">Tests / Stations</th>
+                      <th className="px-4 py-3 font-semibold">Contact</th>
+                      <th className="px-4 py-3 font-semibold">Registered</th>
+                      <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border bg-background">
+                    {pendingRegistrations.map((registration) => {
+                      const patientName = [registration.firstName, registration.middleName, registration.lastName]
+                        .filter(Boolean)
+                        .join(' ');
+                      const tests =
+                        registration.selectedServiceCodes.length > 0
+                          ? registration.selectedServiceCodes.map(formatServiceCode).join(', ')
+                          : registration.queueEntry?.pendingLanes.join(', ') || 'N/A';
 
-                  <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                    <p>
-                      Birthdate: <span className="text-foreground">{registration.birthDate}</span>
-                    </p>
-                    <p>
-                      Contact: <span className="text-foreground">{registration.contactNumber}</span>
-                    </p>
-                    <p>
-                      Email: <span className="text-foreground">{registration.emailAddress}</span>
-                    </p>
-                    <p>
-                      Address:{' '}
-                      <span className="text-foreground">{`${registration.city}, ${registration.province}`}</span>
-                    </p>
-                  </div>
-                </div>
-              ))
+                      return (
+                        <tr key={registration.id} className="align-top hover:bg-muted/30">
+                          <td className="px-4 py-4">
+                            <p className="font-bold text-primary">
+                              {registration.queueEntry?.queueNumber ?? 'Pending'}
+                            </p>
+                            {registration.registrationCode && (
+                              <p className="mt-1 text-xs text-muted-foreground">{registration.registrationCode}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-semibold text-foreground">{patientName}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {registration.company || 'No company'}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              DOB: {registration.birthDate || 'N/A'}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium">{registration.serviceNeeded}</p>
+                            {registration.requestedLabService && (
+                              <p className="mt-1 text-xs text-muted-foreground">{registration.requestedLabService}</p>
+                            )}
+                          </td>
+                          <td className="max-w-xs px-4 py-4 text-muted-foreground">
+                            {tests}
+                          </td>
+                          <td className="px-4 py-4">
+                            <p>{registration.contactNumber || 'N/A'}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{registration.emailAddress || 'N/A'}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {[registration.city, registration.province].filter(Boolean).join(', ') || 'N/A'}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4 text-muted-foreground">
+                            {new Date(registration.submittedAt).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex justify-end gap-2">
+                              {registration.queueEntry ? (
+                                <>
+                                  <Button size="sm" variant="outline" onClick={() => void handlePrintRegisteredSlip(registration)}>
+                                    <Printer className="h-4 w-4" />
+                                    Print
+                                  </Button>
+                                  <Button asChild size="sm" variant="outline">
+                                    <Link href={getQueueVisitPath(registration.queueEntry.id)}>Open</Link>
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button size="sm" variant="outline" onClick={() => handleLoadRegistration(registration)}>
+                                  Load
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground xl:col-span-2">
-                No pending self-registrations yet. New `/register` submissions will appear here.
+              <div className="p-6 text-sm text-muted-foreground">
+                No registered patients yet. New `/register` submissions will appear here.
               </div>
             )}
           </div>

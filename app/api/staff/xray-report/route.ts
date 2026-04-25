@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { requireStaffContext } from '@/lib/supabase/admin-auth';
 
 type LabOrderItemRow = {
   id: string;
@@ -189,6 +190,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const context = await requireStaffContext(request);
     const body = (await request.json()) as {
       queueId?: string;
       examType?: string;
@@ -244,6 +246,7 @@ export async function POST(request: Request) {
         source_order_id: payload.orderId || null,
         raw_content: rawContent,
         parsed_payload: payload,
+        imported_by: context.userId,
         accepted_at: new Date().toISOString(),
       })
       .select()

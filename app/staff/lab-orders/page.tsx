@@ -3,9 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Beaker, FileUp, ScanLine } from 'lucide-react';
+import { Beaker, Eye, FileUp, RefreshCw, ScanLine, Search } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { PageLayout } from '@/components/layout/page-layout';
 import { fetchQueueEntry, postQueueAction } from '@/lib/queue-api';
 import { getQueueVisitPath, QueueEntry, QueueLane } from '@/lib/queue-store';
@@ -15,6 +17,7 @@ import {
   saveVisitMachineResult,
 } from '@/lib/patient-records-store';
 import { parseMachineResultText, type ParsedMachineResult } from '@/lib/machine-result-parser';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 type LabLane = Extract<QueueLane, 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG'>;
 type BloodTestCategory = 'hematology' | 'urinalysis';
@@ -30,17 +33,52 @@ type XrayReport = {
   rawText: string;
 };
 
+type LabOrderRequest = {
+  id: string;
+  labOrderId: string;
+  orderNumber: string;
+  queueId: string;
+  queueNumber: string;
+  patientName: string;
+  testName: string;
+  lane: LabLane;
+  status: string;
+  specimenStatus: string;
+  requestedAt: string;
+  hasResult: boolean;
+  resultUploadedAt: string | null;
+};
+
 const supportedLanes: LabLane[] = ['BLOOD TEST', 'DRUG TEST', 'XRAY', 'ECG'];
 
 function readLaneParam(rawLane: string | null): LabLane {
   return supportedLanes.includes(rawLane as LabLane) ? (rawLane as LabLane) : 'BLOOD TEST';
 }
 
+async function getStaffAccessToken() {
+  const supabase = getSupabaseBrowserClient();
+  const {
+    data: { session },
+  } = await supabase!.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Missing authenticated session.');
+  }
+
+  return session.access_token;
+}
+
 function LabOrdersPageContent() {
   const searchParams = useSearchParams();
   const queueId = searchParams.get('queueId');
   const lane = readLaneParam(searchParams.get('lane'));
+  const mode = searchParams.get('mode') === 'result' ? 'result' : 'station';
+  const isResultMode = mode === 'result';
   const [entry, setEntry] = useState<QueueEntry | null>(null);
+  const [labOrders, setLabOrders] = useState<LabOrderRequest[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
   const [parsedImport, setParsedImport] = useState<ParsedMachineResult | null>(null);
   const [rawImportText, setRawImportText] = useState('');
   const [importMessage, setImportMessage] = useState('');
@@ -55,6 +93,51 @@ function LabOrdersPageContent() {
   const [xrayFindings, setXrayFindings] = useState('');
   const [xrayImpression, setXrayImpression] = useState('');
   const [xrayRemarks, setXrayRemarks] = useState('');
+
+  const loadLabOrders = async (search = searchQuery) => {
+    setIsLoadingOrders(true);
+    setOrdersError('');
+
+    try {
+      const token = await getStaffAccessToken();
+      const params = new URLSearchParams();
+      if (search.trim()) {
+        params.set('search', search.trim());
+      }
+
+      const response = await fetch(
+        `/api/staff/lab-orders${params.toString() ? `?${params.toString()}` : ''}`,
+        {
+          cache: 'no-store',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const payload = (await response.json()) as {
+        error?: string;
+        labOrders?: LabOrderRequest[];
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Unable to load lab orders.');
+      }
+
+      setLabOrders(payload.labOrders ?? []);
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error.message : 'Unable to load lab orders.');
+      setLabOrders([]);
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!queueId) {
+      void loadLabOrders('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueId]);
 
   useEffect(() => {
     if (!queueId) {
@@ -214,6 +297,7 @@ function LabOrdersPageContent() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getStaffAccessToken()}`,
         },
         body: JSON.stringify({
           queueId,
@@ -255,6 +339,7 @@ function LabOrdersPageContent() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getStaffAccessToken()}`,
         },
         body: JSON.stringify({
           queueId,
@@ -292,6 +377,162 @@ function LabOrdersPageContent() {
     }
   };
 
+  if (!queueId) {
+    const counters = {
+      total: labOrders.length,
+      pending: labOrders.filter((item) => item.specimenStatus !== 'completed').length,
+      completed: labOrders.filter((item) => item.specimenStatus === 'completed').length,
+      withResults: labOrders.filter((item) => item.hasResult).length,
+    };
+
+    return (
+      <PageLayout>
+        <div className="px-8 py-8">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Lab Requests</p>
+              <h1 className="mt-2 text-3xl font-bold">Lab Orders</h1>
+              <p className="mt-2 max-w-3xl text-muted-foreground">
+                View blood test, drug test, xray, and ECG requests. Open a request to upload machine results or encode findings.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <Card className="min-w-28 p-4 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
+                <p className="mt-2 text-3xl font-black">{counters.total}</p>
+              </Card>
+              <Card className="min-w-28 p-4 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pending</p>
+                <p className="mt-2 text-3xl font-black text-amber-600">{counters.pending}</p>
+              </Card>
+              <Card className="min-w-28 p-4 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tested</p>
+                <p className="mt-2 text-3xl font-black text-emerald-600">{counters.completed}</p>
+              </Card>
+              <Card className="min-w-28 p-4 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Results</p>
+                <p className="mt-2 text-3xl font-black text-primary">{counters.withResults}</p>
+              </Card>
+            </div>
+          </div>
+
+          {ordersError && (
+            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {ordersError}
+            </div>
+          )}
+
+          <Card className="mt-8 p-6">
+            <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search patient, order number, queue number, or test..."
+                  className="pl-10"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void loadLabOrders(searchQuery)}>
+                  Search
+                </Button>
+                <Button variant="outline" onClick={() => void loadLabOrders('')}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="mt-8 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold">Request List</h2>
+                <p className="text-sm text-muted-foreground">
+                  Open a request to view patient context and upload the machine result.
+                </p>
+              </div>
+              <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+                {labOrders.length} requests
+              </span>
+            </div>
+
+            <div className="mt-6 overflow-hidden rounded-xl border">
+              <div className="max-h-[42rem] overflow-auto">
+                <table className="w-full min-w-[68rem] text-sm">
+                  <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                    <tr className="border-b border-border">
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Order</th>
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Patient</th>
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Request</th>
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Status</th>
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Result</th>
+                      <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {labOrders.map((order) => (
+                      <tr key={order.id} className="border-b border-border">
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{order.orderNumber || 'No order no.'}</p>
+                          <p className="text-xs text-muted-foreground">{order.queueNumber || 'No queue no.'}</p>
+                        </td>
+                        <td className="px-4 py-3">{order.patientName || 'Unknown patient'}</td>
+                        <td className="px-4 py-3">
+                          <p className="font-medium">{order.testName}</p>
+                          <p className="text-xs text-muted-foreground">{order.lane}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant="outline">{order.specimenStatus.replaceAll('_', ' ')}</Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          {order.hasResult ? (
+                            <div>
+                              <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                                Uploaded
+                              </Badge>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {order.resultUploadedAt ? new Date(order.resultUploadedAt).toLocaleString() : ''}
+                              </p>
+                            </div>
+                          ) : (
+                            <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
+                              No result
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {order.queueId ? (
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={`/staff/lab-orders?queueId=${encodeURIComponent(order.queueId)}&lane=${encodeURIComponent(order.lane)}&mode=result`}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </Link>
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No queue context</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {!labOrders.length && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                          {isLoadingOrders ? 'Loading lab requests...' : 'No lab requests found.'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </PageLayout>
+    );
+  }
+
   if (!entry) {
     return (
       <PageLayout>
@@ -318,13 +559,15 @@ function LabOrdersPageContent() {
             <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
               {lane} Station
             </p>
-            <h1 className="mt-2 text-3xl font-bold">Scanned Patient Workflow</h1>
+            <h1 className="mt-2 text-3xl font-bold">
+              {isResultMode ? 'Lab Result Workflow' : 'Queue Station Workflow'}
+            </h1>
             <p className="mt-2 text-muted-foreground">
-      {lane === 'BLOOD TEST'
-        ? 'Use the selected queue visit to handle CBC or urinalysis under the BLOOD TEST station and return the patient to general intake once done.'
-        : lane === 'ECG'
-          ? 'Use the selected queue visit to review the patient profile and complete the ECG step from this station.'
-          : 'Use the selected queue visit to handle this lab step and return the patient to general intake once done.'}
+              {isResultMode
+                ? `Upload or encode the ${lane} result for this lab request.`
+                : lane === 'BLOOD TEST'
+                  ? 'Use this station view for blood extraction only. No machine upload is needed here; mark the queue step complete after extraction.'
+                  : `Use this station view for the ${lane} queue step. Mark the queue step complete after the station work is done.`}
             </p>
           </div>
           <Button asChild variant="outline">
@@ -377,7 +620,99 @@ function LabOrdersPageContent() {
           </Card>
 
           <div className="space-y-6">
-            {lane === 'XRAY' ? (
+            {!isResultMode ? (
+            <>
+            <Card className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="rounded-full bg-primary/10 p-3 text-primary">
+                  <ScanLine className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">
+                    {lane === 'BLOOD TEST' ? 'Blood Extraction' : `${lane} Station`}
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    {lane === 'BLOOD TEST'
+                      ? 'Complete this step after the blood sample has been collected. Testing and machine upload happen later from the Lab Orders list.'
+                      : 'Complete this queue step after the station work is done. Result upload or encoding happens from the Lab Orders list.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-xl border border-border bg-muted/30 p-4 text-sm">
+                <p className="font-semibold">Step Status</p>
+                <p className="mt-1 text-muted-foreground">
+                  {isCompletedHere
+                    ? `${lane} is already completed for this patient.`
+                    : isCurrentLane
+                      ? `Patient is currently inside ${lane}. Mark complete when the station task is done.`
+                      : hasPendingStep
+                        ? `${lane} is still pending, but the patient has not been moved into this station yet. Call the patient from queue management first.`
+                        : `No pending ${lane} step is available for this patient.`}
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button variant="outline" onClick={handleCompleteStep} disabled={!isServingHere}>
+                  Mark Step Complete
+                </Button>
+                <Button asChild variant="outline">
+                  <Link href="/staff/lab-orders">Open Lab Orders List</Link>
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-3">
+                <Beaker className="h-5 w-5 text-primary" />
+                <h2 className="text-lg font-bold">Station Summary</h2>
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Pending Steps
+                  </p>
+                  {entry.pendingLanes.length > 0 ? (
+                    <ul className="mt-3 space-y-2 text-sm">
+                      {entry.pendingLanes.map((pendingLane) => (
+                        <li
+                          key={pendingLane}
+                          className={`rounded-lg px-3 py-2 font-medium ${
+                            pendingLane === lane
+                              ? 'bg-primary/10 text-primary'
+                              : 'bg-background'
+                          }`}
+                        >
+                          {pendingLane}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-muted-foreground">No pending steps.</p>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Completed Steps
+                  </p>
+                  {entry.completedLanes.length > 0 ? (
+                    <ul className="mt-3 space-y-2 text-sm">
+                      {entry.completedLanes.map((completedLane) => (
+                        <li key={completedLane} className="rounded-lg bg-background px-3 py-2 font-medium">
+                          {completedLane}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-muted-foreground">No completed steps yet.</p>
+                  )}
+                </div>
+              </div>
+            </Card>
+            </>
+            ) : lane === 'XRAY' ? (
             <>
             <Card className="p-6">
               <div className="flex items-center gap-3">
@@ -514,7 +849,7 @@ function LabOrdersPageContent() {
               )}
             </Card>
             </>
-            ) : lane !== 'ECG' ? (
+            ) : (
             <>
             <Card className="p-6">
               <div className="flex items-center gap-3">
@@ -735,28 +1070,6 @@ function LabOrdersPageContent() {
               )}
             </Card>
             </>
-            ) : (
-            <Card className="p-6">
-              <div className="flex items-center gap-3">
-                <FileUp className="h-5 w-5 text-primary" />
-                <div>
-                  <h2 className="text-lg font-bold">ECG Handling</h2>
-                  <p className="text-sm text-muted-foreground">
-                    ECG is currently handled as a direct station workflow. Review the patient visit, perform the ECG process, then mark the step complete here.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                No machine TXT upload is configured for ECG yet. Use the patient visit for profile context and complete the ECG station when done.
-              </div>
-
-              {importError && (
-                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                  {importError}
-                </div>
-              )}
-            </Card>
             )}
           </div>
         </div>

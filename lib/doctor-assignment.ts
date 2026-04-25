@@ -3,7 +3,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 export type DoctorAssignmentOption = {
   id: string;
   fullName: string;
-  email: string;
+  email?: string;
   activeLoad: number;
   pendingConsultations: number;
   inProgressConsultations: number;
@@ -33,6 +33,15 @@ type PatientMatch = {
   fullName: string;
   matchSource: 'name_birthdate_contact' | 'name_birthdate' | 'email_birthdate';
 };
+
+function getManilaDate() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 function toDisplayName(patient: {
   first_name?: string | null;
@@ -136,9 +145,8 @@ export async function getDoctorAssignmentSuggestion(
   patient?: PatientLookup
 ): Promise<DoctorAssignmentSuggestion> {
   const { data: doctorsData, error: doctorsError } = await supabase
-    .from('staff_profiles')
-    .select('id, full_name, email')
-    .eq('role', 'doctor')
+    .from('doctors')
+    .select('id, full_name')
     .eq('is_active', true);
 
   if (doctorsError) {
@@ -146,16 +154,34 @@ export async function getDoctorAssignmentSuggestion(
   }
 
   const doctorIds = (doctorsData ?? []).map((doctor) => String(doctor.id));
+  const availabilityByDoctorId = new Map<string, boolean>();
   const loadByDoctorId = new Map<
     string,
     { pendingConsultations: number; inProgressConsultations: number }
   >();
 
   if (doctorIds.length > 0) {
+    const { data: availabilityData, error: availabilityError } = await supabase
+      .from('doctor_availability')
+      .select('doctor_id, is_available')
+      .eq('availability_date', getManilaDate())
+      .in('doctor_id', doctorIds);
+
+    if (availabilityError) {
+      throw availabilityError;
+    }
+
+    for (const availability of availabilityData ?? []) {
+      availabilityByDoctorId.set(
+        String(availability.doctor_id ?? ''),
+        Boolean(availability.is_available)
+      );
+    }
+
     const { data: consultationsData, error: consultationsError } = await supabase
       .from('consultations')
-      .select('doctor_id, status')
-      .in('doctor_id', doctorIds)
+      .select('doctor_directory_id, status')
+      .in('doctor_directory_id', doctorIds)
       .in('status', ['pending', 'in_progress']);
 
     if (consultationsError) {
@@ -163,7 +189,7 @@ export async function getDoctorAssignmentSuggestion(
     }
 
     for (const consultation of consultationsData ?? []) {
-      const doctorId = String(consultation.doctor_id ?? '');
+      const doctorId = String(consultation.doctor_directory_id ?? '');
 
       if (!doctorId) {
         continue;
@@ -185,6 +211,7 @@ export async function getDoctorAssignmentSuggestion(
   }
 
   const doctors: DoctorAssignmentOption[] = (doctorsData ?? [])
+    .filter((doctor) => availabilityByDoctorId.get(String(doctor.id)) ?? true)
     .map((doctor) => {
       const load = loadByDoctorId.get(String(doctor.id)) ?? {
         pendingConsultations: 0,
@@ -194,7 +221,7 @@ export async function getDoctorAssignmentSuggestion(
       return {
         id: String(doctor.id),
         fullName: String(doctor.full_name ?? ''),
-        email: String(doctor.email ?? ''),
+        email: '',
         pendingConsultations: load.pendingConsultations,
         inProgressConsultations: load.inProgressConsultations,
         activeLoad: load.pendingConsultations + load.inProgressConsultations,
@@ -242,14 +269,14 @@ export async function getDoctorAssignmentSuggestion(
       const { data: consultationData, error: consultationError } = await supabase
         .from('consultations')
         .select(`
-          doctor_id,
-          staff_profiles:doctor_id (
+          doctor_directory_id,
+          doctors:doctor_directory_id (
             full_name
           ),
           created_at
         `)
         .in('visit_id', visitIds)
-        .not('doctor_id', 'is', null)
+        .not('doctor_directory_id', 'is', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -258,9 +285,9 @@ export async function getDoctorAssignmentSuggestion(
         throw consultationError;
       }
 
-      if (consultationData?.doctor_id) {
+      if (consultationData?.doctor_directory_id) {
         const matchedDoctor = doctors.find(
-          (doctor) => doctor.id === String(consultationData.doctor_id)
+          (doctor) => doctor.id === String(consultationData.doctor_directory_id)
         );
 
         if (matchedDoctor) {

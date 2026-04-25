@@ -1,7 +1,8 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Building2, DollarSign, Pencil, ShieldPlus, Users } from 'lucide-react';
+import { Building2, DollarSign, Pencil, ShieldPlus, Stethoscope, Trash2, Users } from 'lucide-react';
+import { actionPermissionCatalog, getDefaultActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 import { PageLayout } from '@/components/layout/page-layout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ type ServiceCatalogRow = {
   amount: number;
   is_active: boolean;
   sort_order: number;
+  service_lane?: string | null;
   updated_at?: string;
 };
 
@@ -47,6 +49,11 @@ type PartnerCompanyRow = {
   email_address?: string | null;
   notes?: string | null;
   is_active: boolean;
+  preEmploymentAmount?: number;
+  checkUpAmount?: number;
+  labAmount?: number;
+  preEmploymentServiceCodes?: string[];
+  labServiceCodes?: string[];
   updated_at?: string;
 };
 
@@ -58,6 +65,14 @@ type StaffProfileRow = {
   assigned_lane?: string | null;
   is_active: boolean;
   allowed_modules?: StaffModulePath[];
+  action_permissions?: ActionPermission[];
+  updated_at?: string;
+};
+
+type DoctorRow = {
+  id: string;
+  full_name: string;
+  is_active: boolean;
   updated_at?: string;
 };
 
@@ -67,6 +82,7 @@ const initialServiceForm = {
   category: '',
   amount: '0',
   sort_order: '1',
+  service_lane: '',
 };
 
 const initialCompanyForm = {
@@ -76,6 +92,11 @@ const initialCompanyForm = {
   contact_number: '',
   email_address: '',
   notes: '',
+  pre_employment_amount: '0',
+  check_up_amount: '0',
+  lab_amount: '0',
+  pre_employment_service_codes: [] as string[],
+  lab_service_codes: [] as string[],
 };
 
 const initialStaffForm = {
@@ -85,11 +106,21 @@ const initialStaffForm = {
   role: 'nurse',
 };
 
+const initialDoctorForm = {
+  full_name: '',
+};
+
 const initialStaffEditForm = {
   full_name: '',
   role: 'nurse',
   is_active: true,
   allowed_modules: [] as StaffModulePath[],
+  action_permissions: [] as ActionPermission[],
+};
+
+const initialDoctorEditForm = {
+  full_name: '',
+  is_active: true,
 };
 
 async function getAdminAccessToken() {
@@ -109,6 +140,7 @@ export default function AdminSettingsPage() {
   const [stationRole, setStationRole] = useState<string | null>(null);
   const [services, setServices] = useState<ServiceCatalogRow[]>([]);
   const [companies, setCompanies] = useState<PartnerCompanyRow[]>([]);
+  const [doctors, setDoctors] = useState<DoctorRow[]>([]);
   const [staff, setStaff] = useState<StaffProfileRow[]>([]);
   const [pageError, setPageError] = useState('');
   const [pageNotice, setPageNotice] = useState('');
@@ -117,13 +149,16 @@ export default function AdminSettingsPage() {
   const [serviceForm, setServiceForm] = useState(initialServiceForm);
   const [companyForm, setCompanyForm] = useState(initialCompanyForm);
   const [staffForm, setStaffForm] = useState(initialStaffForm);
+  const [doctorForm, setDoctorForm] = useState(initialDoctorForm);
   const [staffFilter, setStaffFilter] = useState<'all' | 'pending' | 'active'>('all');
   const [editingService, setEditingService] = useState<ServiceCatalogRow | null>(null);
   const [editingCompany, setEditingCompany] = useState<PartnerCompanyRow | null>(null);
   const [editingStaff, setEditingStaff] = useState<StaffProfileRow | null>(null);
+  const [editingDoctor, setEditingDoctor] = useState<DoctorRow | null>(null);
   const [serviceEditForm, setServiceEditForm] = useState(initialServiceForm);
   const [companyEditForm, setCompanyEditForm] = useState(initialCompanyForm);
   const [staffEditForm, setStaffEditForm] = useState(initialStaffEditForm);
+  const [doctorEditForm, setDoctorEditForm] = useState(initialDoctorEditForm);
 
   const isAdmin = stationRole === 'admin';
 
@@ -132,8 +167,17 @@ export default function AdminSettingsPage() {
   }, []);
 
   const activeServices = useMemo(() => services.filter((service) => service.is_active), [services]);
+  const activeLabServices = useMemo(
+    () =>
+      activeServices.filter((service) => {
+        const category = service.category.toLowerCase();
+        return Boolean(service.service_lane) || category.includes('laboratory') || category.includes('imaging');
+      }),
+    [activeServices]
+  );
   const activeCompanies = useMemo(() => companies.filter((company) => company.is_active), [companies]);
   const activeStaff = useMemo(() => staff.filter((member) => member.is_active), [staff]);
+  const activeDoctors = useMemo(() => doctors.filter((doctor) => doctor.is_active), [doctors]);
   const pendingStaff = useMemo(() => staff.filter((member) => !member.is_active), [staff]);
   const filteredStaff = useMemo(() => {
     if (staffFilter === 'pending') {
@@ -164,7 +208,14 @@ export default function AdminSettingsPage() {
         error?: string;
         services?: ServiceCatalogRow[];
         companies?: PartnerCompanyRow[];
+        doctors?: DoctorRow[];
         staff?: StaffProfileRow[];
+        healthSummary?: {
+          lowInventoryCount?: number;
+          undeliveredNotificationCount?: number;
+          exceptionEventCount?: number;
+          overdueAppointmentCount?: number;
+        };
       };
 
       if (!response.ok) {
@@ -173,6 +224,7 @@ export default function AdminSettingsPage() {
 
       setServices(payload.services ?? []);
       setCompanies(payload.companies ?? []);
+      setDoctors(payload.doctors ?? []);
       setStaff(payload.staff ?? []);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Unable to load admin settings.');
@@ -228,6 +280,7 @@ export default function AdminSettingsPage() {
           ...serviceForm,
           amount: Number(serviceForm.amount),
           sort_order: Number(serviceForm.sort_order),
+          service_lane: serviceForm.service_lane || null,
           is_active: true,
         },
       },
@@ -243,6 +296,11 @@ export default function AdminSettingsPage() {
         kind: 'company',
         company: {
           ...companyForm,
+          pre_employment_amount: Number(companyForm.pre_employment_amount),
+          check_up_amount: Number(companyForm.check_up_amount),
+          lab_amount: Number(companyForm.lab_amount),
+          pre_employment_service_codes: companyForm.pre_employment_service_codes,
+          lab_service_codes: companyForm.lab_service_codes,
           is_active: true,
         },
       },
@@ -259,6 +317,7 @@ export default function AdminSettingsPage() {
       category: service.category,
       amount: String(service.amount),
       sort_order: String(service.sort_order),
+      service_lane: service.service_lane ?? '',
     });
   };
 
@@ -271,6 +330,11 @@ export default function AdminSettingsPage() {
       contact_number: company.contact_number ?? '',
       email_address: company.email_address ?? '',
       notes: company.notes ?? '',
+      pre_employment_amount: String(company.preEmploymentAmount ?? 0),
+      check_up_amount: String(company.checkUpAmount ?? 0),
+      lab_amount: String(company.labAmount ?? 0),
+      pre_employment_service_codes: company.preEmploymentServiceCodes ?? [],
+      lab_service_codes: company.labServiceCodes ?? [],
     });
   };
 
@@ -288,6 +352,7 @@ export default function AdminSettingsPage() {
           ...serviceEditForm,
           amount: Number(serviceEditForm.amount),
           sort_order: Number(serviceEditForm.sort_order),
+          service_lane: serviceEditForm.service_lane || null,
           is_active: editingService.is_active,
         },
       },
@@ -310,6 +375,11 @@ export default function AdminSettingsPage() {
         company: {
           id: editingCompany.id,
           ...companyEditForm,
+          pre_employment_amount: Number(companyEditForm.pre_employment_amount),
+          check_up_amount: Number(companyEditForm.check_up_amount),
+          lab_amount: Number(companyEditForm.lab_amount),
+          pre_employment_service_codes: companyEditForm.pre_employment_service_codes,
+          lab_service_codes: companyEditForm.lab_service_codes,
           is_active: editingCompany.is_active,
         },
       },
@@ -325,6 +395,9 @@ export default function AdminSettingsPage() {
     const defaultModules = mapDbRoleToStationRole(staffForm.role)
       ? getDefaultAllowedModules(mapDbRoleToStationRole(staffForm.role)!)
       : [];
+    const defaultPermissions = mapDbRoleToStationRole(staffForm.role)
+      ? getDefaultActionPermissions(mapDbRoleToStationRole(staffForm.role)!)
+      : [];
     await submitAdminAction(
       {
         kind: 'staff',
@@ -332,6 +405,7 @@ export default function AdminSettingsPage() {
           ...staffForm,
           is_active: true,
           allowed_modules: defaultModules,
+          action_permissions: defaultPermissions,
         },
       },
       'Staff account has been created.'
@@ -339,9 +413,26 @@ export default function AdminSettingsPage() {
     setStaffForm(initialStaffForm);
   };
 
+  const handleDoctorSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    await submitAdminAction(
+      {
+        kind: 'doctor',
+        doctor: {
+          ...doctorForm,
+          is_active: true,
+        },
+      },
+      'Doctor has been added.'
+    );
+    setDoctorForm(initialDoctorForm);
+  };
+
   const openStaffEdit = (member: StaffProfileRow) => {
     const stationRole = mapDbRoleToStationRole(member.role);
     const fallbackModules = stationRole ? getDefaultAllowedModules(stationRole) : [];
+    const fallbackPermissions = stationRole ? getDefaultActionPermissions(stationRole) : [];
     setEditingStaff(member);
     setStaffEditForm({
       full_name: member.full_name,
@@ -351,7 +442,52 @@ export default function AdminSettingsPage() {
         member.allowed_modules && member.allowed_modules.length > 0
           ? member.allowed_modules
           : fallbackModules,
+      action_permissions:
+        member.action_permissions && member.action_permissions.length > 0
+          ? member.action_permissions
+          : fallbackPermissions,
     });
+  };
+
+  const openDoctorEdit = (doctor: DoctorRow) => {
+    setEditingDoctor(doctor);
+    setDoctorEditForm({
+      full_name: doctor.full_name,
+      is_active: doctor.is_active,
+    });
+  };
+
+  const toggleCompanyServiceCode = (
+    target: 'create-pre-employment' | 'create-lab' | 'edit-pre-employment' | 'edit-lab',
+    serviceCode: string,
+    checked: boolean
+  ) => {
+    const updateCodes = (currentCodes: string[]) =>
+      checked
+        ? Array.from(new Set([...currentCodes, serviceCode]))
+        : currentCodes.filter((code) => code !== serviceCode);
+
+    if (target === 'create-pre-employment') {
+      setCompanyForm((current) => ({
+        ...current,
+        pre_employment_service_codes: updateCodes(current.pre_employment_service_codes),
+      }));
+    } else if (target === 'create-lab') {
+      setCompanyForm((current) => ({
+        ...current,
+        lab_service_codes: updateCodes(current.lab_service_codes),
+      }));
+    } else if (target === 'edit-pre-employment') {
+      setCompanyEditForm((current) => ({
+        ...current,
+        pre_employment_service_codes: updateCodes(current.pre_employment_service_codes),
+      }));
+    } else {
+      setCompanyEditForm((current) => ({
+        ...current,
+        lab_service_codes: updateCodes(current.lab_service_codes),
+      }));
+    }
   };
 
   const handleStaffModuleToggle = (href: StaffModulePath, checked: boolean) => {
@@ -360,6 +496,15 @@ export default function AdminSettingsPage() {
       allowed_modules: checked
         ? Array.from(new Set([...current.allowed_modules, href]))
         : current.allowed_modules.filter((item) => item !== href),
+    }));
+  };
+
+  const handleStaffPermissionToggle = (permission: ActionPermission, checked: boolean) => {
+    setStaffEditForm((current) => ({
+      ...current,
+      action_permissions: checked
+        ? Array.from(new Set([...current.action_permissions, permission]))
+        : current.action_permissions.filter((item) => item !== permission),
     }));
   };
 
@@ -379,6 +524,7 @@ export default function AdminSettingsPage() {
           role: staffEditForm.role as StaffProfileRow['role'],
           is_active: staffEditForm.is_active,
           allowed_modules: staffEditForm.allowed_modules,
+          action_permissions: staffEditForm.action_permissions,
         },
       },
       'Staff account permissions have been updated.'
@@ -386,6 +532,47 @@ export default function AdminSettingsPage() {
 
     setEditingStaff(null);
     setStaffEditForm(initialStaffEditForm);
+  };
+
+  const saveDoctor = async (
+    doctor: DoctorRow,
+    isActive: boolean,
+    successMessage: string,
+    fullName = doctor.full_name
+  ) => {
+    await submitAdminAction(
+      {
+        kind: 'doctor',
+        doctor: {
+          id: doctor.id,
+          full_name: fullName,
+          is_active: isActive,
+        },
+      },
+      successMessage
+    );
+  };
+
+  const handleDoctorEditSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingDoctor) {
+      return;
+    }
+
+    await saveDoctor(
+      editingDoctor,
+      doctorEditForm.is_active,
+      'Doctor profile has been updated.',
+      doctorEditForm.full_name
+    );
+    setEditingDoctor(null);
+    setDoctorEditForm(initialDoctorEditForm);
+  };
+
+  const handleDoctorDeactivate = async (doctor: DoctorRow) => {
+    await saveDoctor(doctor, false, 'Doctor has been deactivated.');
+    setEditingDoctor(null);
+    setDoctorEditForm(initialDoctorEditForm);
   };
 
   if (stationRole === null) {
@@ -419,7 +606,7 @@ export default function AdminSettingsPage() {
               directly affect the operational workflow, especially cashier billing and clinic setup.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <Card className="min-w-32 p-4 text-center">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active Services</p>
               <p className="mt-2 text-3xl font-black text-primary">{activeServices.length}</p>
@@ -431,6 +618,10 @@ export default function AdminSettingsPage() {
             <Card className="min-w-32 p-4 text-center">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Staff Users</p>
               <p className="mt-2 text-3xl font-black">{activeStaff.length}</p>
+            </Card>
+            <Card className="min-w-32 p-4 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Doctors</p>
+              <p className="mt-2 text-3xl font-black">{activeDoctors.length}</p>
             </Card>
           </div>
         </div>
@@ -448,7 +639,7 @@ export default function AdminSettingsPage() {
         )}
 
         <Tabs defaultValue="services" className="mt-8">
-          <TabsList className="grid h-auto grid-cols-3 gap-2 bg-transparent p-0">
+          <TabsList className="grid h-auto grid-cols-4 gap-2 bg-transparent p-0">
             <TabsTrigger value="services" className="h-11 border">
               <DollarSign className="h-4 w-4" />
               Service Pricing
@@ -456,6 +647,10 @@ export default function AdminSettingsPage() {
             <TabsTrigger value="companies" className="h-11 border">
               <Building2 className="h-4 w-4" />
               Partner Companies
+            </TabsTrigger>
+            <TabsTrigger value="doctors" className="h-11 border">
+              <Stethoscope className="h-4 w-4" />
+              Doctors
             </TabsTrigger>
             <TabsTrigger value="staff" className="h-11 border">
               <Users className="h-4 w-4" />
@@ -487,10 +682,25 @@ export default function AdminSettingsPage() {
                       <Input id="service_name" value={serviceForm.service_name} onChange={(event) => setServiceForm((current) => ({ ...current, service_name: event.target.value }))} placeholder="Blood Test Service" required />
                     </div>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 md:grid-cols-4">
                     <div className="space-y-2">
                       <Label htmlFor="service_category">Category</Label>
                       <Input id="service_category" value={serviceForm.category} onChange={(event) => setServiceForm((current) => ({ ...current, category: event.target.value }))} placeholder="Laboratory" required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="service_lane">Lab Lane</Label>
+                      <select
+                        id="service_lane"
+                        value={serviceForm.service_lane}
+                        onChange={(event) => setServiceForm((current) => ({ ...current, service_lane: event.target.value }))}
+                        className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                      >
+                        <option value="">Not a lab test</option>
+                        <option value="blood_test">Blood Test</option>
+                        <option value="drug_test">Drug Test</option>
+                        <option value="xray">Xray</option>
+                        <option value="ecg">ECG</option>
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="service_amount">Price</Label>
@@ -516,6 +726,7 @@ export default function AdminSettingsPage() {
                       <TableRow>
                         <TableHead>Service</TableHead>
                         <TableHead>Category</TableHead>
+                        <TableHead>Lane</TableHead>
                         <TableHead>Price</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
@@ -530,6 +741,7 @@ export default function AdminSettingsPage() {
                             </div>
                           </TableCell>
                           <TableCell>{service.category}</TableCell>
+                          <TableCell>{service.service_lane ? service.service_lane.replaceAll('_', ' ') : 'N/A'}</TableCell>
                           <TableCell>{formatCurrency(Number(service.amount ?? 0))}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{service.is_active ? 'Active' : 'Inactive'}</Badge>
@@ -593,6 +805,99 @@ export default function AdminSettingsPage() {
                     <Label htmlFor="company_email">Email Address</Label>
                     <Input id="company_email" type="email" value={companyForm.email_address} onChange={(event) => setCompanyForm((current) => ({ ...current, email_address: event.target.value }))} placeholder="partner@company.com" />
                   </div>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="company_pre_employment_amount">Pre-Employment Price</Label>
+                      <Input
+                        id="company_pre_employment_amount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={companyForm.pre_employment_amount}
+                        onChange={(event) =>
+                          setCompanyForm((current) => ({
+                            ...current,
+                            pre_employment_amount: event.target.value,
+                          }))
+                        }
+                        placeholder="850.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="company_check_up_amount">Check-Up Price</Label>
+                      <Input
+                        id="company_check_up_amount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={companyForm.check_up_amount}
+                        onChange={(event) =>
+                          setCompanyForm((current) => ({
+                            ...current,
+                            check_up_amount: event.target.value,
+                          }))
+                        }
+                        placeholder="500.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="company_lab_amount">Lab Price</Label>
+                      <Input
+                        id="company_lab_amount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={companyForm.lab_amount}
+                        onChange={(event) =>
+                          setCompanyForm((current) => ({
+                            ...current,
+                            lab_amount: event.target.value,
+                          }))
+                        }
+                        placeholder="250.00"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-3 rounded-lg border p-4">
+                      <Label>Pre-Employment Requirements</Label>
+                      <div className="grid gap-2">
+                        {activeLabServices.map((service) => (
+                          <label key={service.service_code} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={companyForm.pre_employment_service_codes.includes(service.service_code)}
+                              onCheckedChange={(checked) =>
+                                toggleCompanyServiceCode('create-pre-employment', service.service_code, checked === true)
+                              }
+                            />
+                            <span>{service.service_name}</span>
+                          </label>
+                        ))}
+                        {!activeLabServices.length && (
+                          <p className="text-sm text-muted-foreground">Add active lab services first.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-lg border p-4">
+                      <Label>Default Lab Requirements</Label>
+                      <div className="grid gap-2">
+                        {activeLabServices.map((service) => (
+                          <label key={service.service_code} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={companyForm.lab_service_codes.includes(service.service_code)}
+                              onCheckedChange={(checked) =>
+                                toggleCompanyServiceCode('create-lab', service.service_code, checked === true)
+                              }
+                            />
+                            <span>{service.service_name}</span>
+                          </label>
+                        ))}
+                        {!activeLabServices.length && (
+                          <p className="text-sm text-muted-foreground">Add active lab services first.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="company_notes">Notes</Label>
                     <Textarea id="company_notes" value={companyForm.notes} onChange={(event) => setCompanyForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Agreement notes or remarks" />
@@ -611,6 +916,7 @@ export default function AdminSettingsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Company</TableHead>
+                        <TableHead>Packages</TableHead>
                         <TableHead>Contact</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
@@ -622,6 +928,14 @@ export default function AdminSettingsPage() {
                             <div>
                               <p className="font-semibold">{company.company_name}</p>
                               <p className="text-xs text-muted-foreground">{company.company_code}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1 text-xs">
+                              <p>Pre-Employment: {formatCurrency(Number(company.preEmploymentAmount ?? 0))}</p>
+                              <p>Check-Up: {formatCurrency(Number(company.checkUpAmount ?? 0))}</p>
+                              <p>Lab: {formatCurrency(Number(company.labAmount ?? 0))}</p>
+                              <p>Requirements: {(company.preEmploymentServiceCodes ?? []).length || 0} tests</p>
                             </div>
                           </TableCell>
                           <TableCell>
@@ -640,8 +954,116 @@ export default function AdminSettingsPage() {
                       ))}
                       {!companies.length && !isLoading && (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground">
+                          <TableCell colSpan={5} className="text-center text-muted-foreground">
                             No partner companies found.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="doctors" className="mt-6">
+            <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+              <Card className="p-6">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-primary/10 p-3 text-primary">
+                    <Stethoscope className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Add Doctor</h2>
+                    <p className="text-sm text-muted-foreground">These names are used for check-up doctor assignment.</p>
+                  </div>
+                </div>
+
+                <form className="mt-6 space-y-4" onSubmit={handleDoctorSubmit}>
+                  <div className="space-y-2">
+                    <Label htmlFor="doctor_name">Full Name</Label>
+                    <Input
+                      id="doctor_name"
+                      value={doctorForm.full_name}
+                      onChange={(event) =>
+                        setDoctorForm((current) => ({ ...current, full_name: event.target.value }))
+                      }
+                      placeholder="Dr. Jane Doe"
+                      required
+                    />
+                  </div>
+                  <Button type="submit" disabled={isSaving} className="w-full">
+                    {isSaving ? 'Saving doctor...' : 'Add Doctor'}
+                  </Button>
+                </form>
+              </Card>
+
+              <Card className="p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold">Doctor Directory</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">Manage names available in the check-up assignment dropdown.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                      {activeDoctors.length} active
+                    </Badge>
+                    <Badge variant="outline">{doctors.length} total</Badge>
+                  </div>
+                </div>
+
+                <div className="mt-5">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Doctor</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {doctors.map((doctor) => (
+                        <TableRow key={doctor.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-semibold">{doctor.full_name}</p>
+                              <p className="text-xs text-muted-foreground">Doctor directory</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              className={
+                                doctor.is_active
+                                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100'
+                                  : 'bg-amber-100 text-amber-700 hover:bg-amber-100'
+                              }
+                            >
+                              {doctor.is_active ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="w-24 text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button type="button" variant="ghost" size="icon" onClick={() => openDoctorEdit(doctor)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              {doctor.is_active && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => void handleDoctorDeactivate(doctor)}
+                                  disabled={isSaving}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {!doctors.length && !isLoading && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-center text-muted-foreground">
+                            No doctor accounts found.
                           </TableCell>
                         </TableRow>
                       )}
@@ -770,6 +1192,11 @@ export default function AdminSettingsPage() {
                                 ? `${member.allowed_modules?.length ?? 0} enabled`
                                 : 'Role default'}
                             </p>
+                            <p className="text-xs text-muted-foreground">
+                              {(member.action_permissions?.length ?? 0) > 0
+                                ? `${member.action_permissions?.length ?? 0} actions`
+                                : 'Role default actions'}
+                            </p>
                           </TableCell>
                           <TableCell>{member.assigned_lane || 'All / None'}</TableCell>
                           <TableCell>
@@ -827,10 +1254,25 @@ export default function AdminSettingsPage() {
                 <Input id="edit_service_name" value={serviceEditForm.service_name} onChange={(event) => setServiceEditForm((current) => ({ ...current, service_name: event.target.value }))} required />
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_service_category">Category</Label>
                 <Input id="edit_service_category" value={serviceEditForm.category} onChange={(event) => setServiceEditForm((current) => ({ ...current, category: event.target.value }))} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_service_lane">Lab Lane</Label>
+                <select
+                  id="edit_service_lane"
+                  value={serviceEditForm.service_lane}
+                  onChange={(event) => setServiceEditForm((current) => ({ ...current, service_lane: event.target.value }))}
+                  className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                >
+                  <option value="">Not a lab test</option>
+                  <option value="blood_test">Blood Test</option>
+                  <option value="drug_test">Drug Test</option>
+                  <option value="xray">Xray</option>
+                  <option value="ecg">ECG</option>
+                </select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_service_amount">Price</Label>
@@ -884,6 +1326,96 @@ export default function AdminSettingsPage() {
               <Label htmlFor="edit_company_email">Email Address</Label>
               <Input id="edit_company_email" type="email" value={companyEditForm.email_address} onChange={(event) => setCompanyEditForm((current) => ({ ...current, email_address: event.target.value }))} />
             </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="edit_company_pre_employment_amount">Pre-Employment Price</Label>
+                <Input
+                  id="edit_company_pre_employment_amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={companyEditForm.pre_employment_amount}
+                  onChange={(event) =>
+                    setCompanyEditForm((current) => ({
+                      ...current,
+                      pre_employment_amount: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_company_check_up_amount">Check-Up Price</Label>
+                <Input
+                  id="edit_company_check_up_amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={companyEditForm.check_up_amount}
+                  onChange={(event) =>
+                    setCompanyEditForm((current) => ({
+                      ...current,
+                      check_up_amount: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_company_lab_amount">Lab Price</Label>
+                <Input
+                  id="edit_company_lab_amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={companyEditForm.lab_amount}
+                  onChange={(event) =>
+                    setCompanyEditForm((current) => ({
+                      ...current,
+                      lab_amount: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-3 rounded-lg border p-4">
+                <Label>Pre-Employment Requirements</Label>
+                <div className="grid gap-2">
+                  {activeLabServices.map((service) => (
+                    <label key={service.service_code} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={companyEditForm.pre_employment_service_codes.includes(service.service_code)}
+                        onCheckedChange={(checked) =>
+                          toggleCompanyServiceCode('edit-pre-employment', service.service_code, checked === true)
+                        }
+                      />
+                      <span>{service.service_name}</span>
+                    </label>
+                  ))}
+                  {!activeLabServices.length && (
+                    <p className="text-sm text-muted-foreground">Add active lab services first.</p>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-3 rounded-lg border p-4">
+                <Label>Default Lab Requirements</Label>
+                <div className="grid gap-2">
+                  {activeLabServices.map((service) => (
+                    <label key={service.service_code} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={companyEditForm.lab_service_codes.includes(service.service_code)}
+                        onCheckedChange={(checked) =>
+                          toggleCompanyServiceCode('edit-lab', service.service_code, checked === true)
+                        }
+                      />
+                      <span>{service.service_name}</span>
+                    </label>
+                  ))}
+                  {!activeLabServices.length && (
+                    <p className="text-sm text-muted-foreground">Add active lab services first.</p>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="edit_company_notes">Notes</Label>
               <Textarea id="edit_company_notes" value={companyEditForm.notes} onChange={(event) => setCompanyEditForm((current) => ({ ...current, notes: event.target.value }))} />
@@ -894,6 +1426,57 @@ export default function AdminSettingsPage() {
               </Button>
               <Button type="submit" disabled={isSaving}>
                 {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingDoctor)} onOpenChange={(open) => !open && setEditingDoctor(null)}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Edit Doctor</DialogTitle>
+            <DialogDescription>Update doctor directory details and assignment availability.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-5" onSubmit={handleDoctorEditSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor="edit_doctor_name">Full Name</Label>
+              <Input
+                id="edit_doctor_name"
+                value={doctorEditForm.full_name}
+                onChange={(event) =>
+                  setDoctorEditForm((current) => ({ ...current, full_name: event.target.value }))
+                }
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_doctor_record">Record Type</Label>
+              <Input id="edit_doctor_record" value="Doctor directory entry" disabled />
+            </div>
+            <div className="flex items-center justify-between rounded-xl border p-4">
+              <div>
+                <p className="font-semibold">Doctor Status</p>
+                <p className="text-sm text-muted-foreground">Inactive doctors are removed from assignment choices.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">
+                  {doctorEditForm.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <Switch
+                  checked={doctorEditForm.is_active}
+                  onCheckedChange={(checked) =>
+                    setDoctorEditForm((current) => ({ ...current, is_active: checked }))
+                  }
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingDoctor(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Doctor'}
               </Button>
             </DialogFooter>
           </form>
@@ -977,6 +1560,31 @@ export default function AdminSettingsPage() {
                     </label>
                   );
                 })}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="font-semibold">Action Permissions</p>
+                <p className="text-sm text-muted-foreground">
+                  Sensitive actions are enforced in both the UI and API.
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {actionPermissionCatalog.map((permissionItem) => (
+                  <label key={permissionItem.key} className="flex items-start gap-3 rounded-xl border p-3">
+                    <Checkbox
+                      checked={staffEditForm.action_permissions.includes(permissionItem.key)}
+                      onCheckedChange={(checked) =>
+                        handleStaffPermissionToggle(permissionItem.key, Boolean(checked))
+                      }
+                    />
+                    <div>
+                      <p className="font-medium">{permissionItem.label}</p>
+                      <p className="text-xs text-muted-foreground">{permissionItem.description}</p>
+                    </div>
+                  </label>
+                ))}
               </div>
             </div>
 

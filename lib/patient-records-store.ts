@@ -55,6 +55,7 @@ function normalizeVisitRecord(visit: Partial<VisitRecord>): VisitRecord {
     updatedAt: visit.updatedAt ?? new Date().toISOString(),
     billing: visit.billing ?? null,
     machineResults: Array.isArray(visit.machineResults) ? visit.machineResults : [],
+    timelineEvents: Array.isArray(visit.timelineEvents) ? visit.timelineEvents : [],
   };
 }
 
@@ -167,6 +168,7 @@ export function createPatientVisitRecord(
     updatedAt: new Date().toISOString(),
     billing: null,
     machineResults: [],
+    timelineEvents: [],
   };
 
   if (existingPatient) {

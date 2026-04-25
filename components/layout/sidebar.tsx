@@ -13,6 +13,7 @@ import {
   FlaskConical,
   Clipboard,
   CheckCircle2,
+  Stethoscope,
   Tickets,
   Settings2,
   LogOut,
@@ -39,6 +40,11 @@ const navItems = [
     label: 'Activity Log',
     href: '/staff/activity-log',
     icon: History,
+  },
+  {
+    label: 'Doctors',
+    href: '/staff/doctors',
+    icon: Stethoscope,
   },
   {
     label: 'Patient Registration',
@@ -130,6 +136,10 @@ export function Sidebar() {
       allowedModules.length > 0
         ? allowedModules.filter((href) => baseAllowed.has(href as never))
         : Array.from(baseAllowed);
+
+    if (stationRole === 'nurse' && !effectiveAllowed.includes('/staff/doctors')) {
+      effectiveAllowed.push('/staff/doctors');
+    }
 
     return navItems.filter((item) => effectiveAllowed.includes(item.href));
   }, [allowedModules, isHydrated, stationRole]);

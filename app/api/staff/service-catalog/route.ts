@@ -6,7 +6,7 @@ export async function GET() {
     const supabase = getSupabaseAdminClient();
     const { data, error } = await supabase
       .from('service_catalog')
-      .select('id, service_code, service_name, category, amount, is_active, sort_order')
+      .select('id, service_code, service_name, category, amount, is_active, sort_order, service_lane')
       .order('sort_order', { ascending: true })
       .order('service_name', { ascending: true });
 
@@ -23,6 +23,7 @@ export async function GET() {
         amount: Number(item.amount ?? 0),
         isActive: Boolean(item.is_active),
         sortOrder: Number(item.sort_order ?? 0),
+        serviceLane: item.service_lane ? String(item.service_lane) : null,
       })),
     });
   } catch (error) {

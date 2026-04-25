@@ -120,6 +120,14 @@ type ResultItemRow = {
   result_flag: DbResultFlag;
 };
 
+type AuditEventRow = {
+  id: string;
+  visit_id: string | null;
+  summary: string;
+  detail: string | null;
+  created_at: string;
+};
+
 function toVisitServiceType(service: DbServiceType): VisitServiceType {
   switch (service) {
     case 'pre_employment':
@@ -323,7 +331,7 @@ export async function GET(request: Request) {
     const invoiceIds = invoices.map((invoice) => invoice.id);
     const machineImportIds = machineImports.map((machineImport) => machineImport.id);
 
-    const [invoiceItemsResponse, paymentsResponse, resultItemsResponse] = await Promise.all([
+    const [invoiceItemsResponse, paymentsResponse, resultItemsResponse, auditEventsResponse] = await Promise.all([
       invoiceIds.length > 0
         ? supabase
             .from('invoice_items')
@@ -345,6 +353,13 @@ export async function GET(request: Request) {
             .in('machine_import_id', machineImportIds)
             .order('display_order', { ascending: true })
         : Promise.resolve({ data: [], error: null }),
+      visitIds.length > 0
+        ? supabase
+            .from('audit_events')
+            .select('id, visit_id, summary, detail, created_at')
+            .in('visit_id', visitIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (invoiceItemsResponse.error) {
@@ -356,10 +371,14 @@ export async function GET(request: Request) {
     if (resultItemsResponse.error) {
       throw new Error(resultItemsResponse.error.message);
     }
+    if (auditEventsResponse.error) {
+      throw new Error(auditEventsResponse.error.message);
+    }
 
     const invoiceItems = (invoiceItemsResponse.data ?? []) as InvoiceItemRow[];
     const payments = (paymentsResponse.data ?? []) as PaymentRow[];
     const resultItems = (resultItemsResponse.data ?? []) as ResultItemRow[];
+    const auditEvents = (auditEventsResponse.data ?? []) as AuditEventRow[];
 
     const queueByVisitId = new Map(queueEntries.map((entry) => [entry.visit_id, entry]));
     const stepsByVisitId = new Map<string, QueueStepRow[]>();
@@ -369,6 +388,7 @@ export async function GET(request: Request) {
     const importsByVisitId = new Map<string, MachineImportRow[]>();
     const labNumbersByVisitId = new Map<string, string[]>();
     const resultsByImportId = new Map<string, ResultItemRow[]>();
+    const auditEventsByVisitId = new Map<string, AuditEventRow[]>();
 
     for (const step of queueSteps) {
       const visitSteps = stepsByVisitId.get(step.visit_id) ?? [];
@@ -408,6 +428,16 @@ export async function GET(request: Request) {
       const importResults = resultsByImportId.get(resultItem.machine_import_id) ?? [];
       importResults.push(resultItem);
       resultsByImportId.set(resultItem.machine_import_id, importResults);
+    }
+
+    for (const auditEvent of auditEvents) {
+      if (!auditEvent.visit_id) {
+        continue;
+      }
+
+      const visitEvents = auditEventsByVisitId.get(auditEvent.visit_id) ?? [];
+      visitEvents.push(auditEvent);
+      auditEventsByVisitId.set(auditEvent.visit_id, visitEvents);
     }
 
     const records: PatientRecord[] = patients.map((patient) => {
@@ -469,6 +499,30 @@ export async function GET(request: Request) {
                 paidAt: payment?.paid_at ?? undefined,
               }
             : null;
+          const timelineEvents = [
+            {
+              id: `visit-created-${visit.id}`,
+              timestamp: queueEntry?.created_at ?? visit.created_at,
+              title: 'Visit created',
+              detail: `${toVisitServiceType(visit.service_type)} workflow started.`,
+            },
+            ...((auditEventsByVisitId.get(visit.id) ?? []).map((event) => ({
+              id: event.id,
+              timestamp: event.created_at,
+              title: event.summary,
+              detail: event.detail ?? '',
+            })) ?? []),
+            ...(billing
+              ? [
+                  {
+                    id: `billing-${visit.id}`,
+                    timestamp: payment?.paid_at ?? visit.updated_at,
+                    title: billing.paymentStatus === 'paid' ? 'Payment completed' : 'Billing prepared',
+                    detail: billing.paymentStatus === 'paid' ? 'Invoice marked as paid.' : 'Invoice is awaiting payment.',
+                  },
+                ]
+              : []),
+          ].sort((left, right) => right.timestamp.localeCompare(left.timestamp));
 
           const queueStatus = queueEntry
             ? dbStatusToUiStatus(queueEntry.queue_status as DbQueueStatus)
@@ -497,6 +551,7 @@ export async function GET(request: Request) {
             updatedAt: visit.updated_at,
             billing,
             machineResults,
+            timelineEvents,
           };
         })
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt));

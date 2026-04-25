@@ -2,10 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Download, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
+import QRCode from 'qrcode';
+import { Copy, Download, QrCode, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { PageLayout } from '@/components/layout/page-layout';
+import { getPublicAppUrl } from '@/lib/app-url';
 import type { PatientRecord, VisitRecord } from '@/lib/patient-record-types';
 import { generatePatientRecordsPdf } from '@/lib/patient-records-pdf';
 
@@ -40,6 +49,7 @@ type VisitTableRow = {
   updatedAt: string;
   billing: VisitRecord['billing'];
   machineResults: VisitRecord['machineResults'];
+  timelineEvents: VisitRecord['timelineEvents'];
   labNumbers: string[];
   notes: string;
 };
@@ -74,10 +84,17 @@ export default function PatientRecordsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [serviceTypeFilter, setServiceTypeFilter] = useState('all');
+  const [labServiceFilter, setLabServiceFilter] = useState('all');
+  const [visitStatusFilter, setVisitStatusFilter] = useState('all');
+  const [currentLaneFilter, setCurrentLaneFilter] = useState('all');
+  const [companyFilter, setCompanyFilter] = useState('all');
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
   const [downloadingQueueId, setDownloadingQueueId] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [visitQrDataUrl, setVisitQrDataUrl] = useState('');
+  const [visitLinkCopied, setVisitLinkCopied] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -150,7 +167,7 @@ export default function PatientRecordsPage() {
   const handleDownloadPdf = async (queueId: string) => {
     try {
       setDownloadingQueueId(queueId);
-      const response = await fetch(`/api/public/report-download?queueId=${encodeURIComponent(queueId)}`, {
+      const response = await fetch(`/api/staff/report-download?queueId=${encodeURIComponent(queueId)}`, {
         cache: 'no-store',
       });
       const payload = (await response.json().catch(() => null)) as
@@ -237,6 +254,7 @@ export default function PatientRecordsPage() {
           updatedAt: visit.updatedAt,
           billing: visit.billing,
           machineResults: visit.machineResults,
+          timelineEvents: visit.timelineEvents,
           labNumbers: visit.labNumbers,
           notes: visit.notes,
         }))
@@ -261,8 +279,46 @@ export default function PatientRecordsPage() {
           .toLowerCase()
           .includes(query);
       })
+      .filter((row) => serviceTypeFilter === 'all' || row.serviceType === serviceTypeFilter)
+      .filter(
+        (row) => labServiceFilter === 'all' || row.requestedLabService === labServiceFilter
+      )
+      .filter((row) => visitStatusFilter === 'all' || row.visitStatus === visitStatusFilter)
+      .filter((row) => currentLaneFilter === 'all' || row.currentLane === currentLaneFilter)
+      .filter((row) => companyFilter === 'all' || row.company === companyFilter)
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-  }, [records, searchQuery]);
+  }, [
+    companyFilter,
+    currentLaneFilter,
+    labServiceFilter,
+    records,
+    searchQuery,
+    serviceTypeFilter,
+    visitStatusFilter,
+  ]);
+
+  const companyOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          records
+            .map((record) => record.company.trim())
+            .filter((company) => company.length > 0)
+        )
+      ).sort((left, right) => left.localeCompare(right)),
+    [records]
+  );
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setStartDate('');
+    setEndDate('');
+    setServiceTypeFilter('all');
+    setLabServiceFilter('all');
+    setVisitStatusFilter('all');
+    setCurrentLaneFilter('all');
+    setCompanyFilter('all');
+  };
 
   useEffect(() => {
     if (visitRows.length === 0) {
@@ -284,8 +340,68 @@ export default function PatientRecordsPage() {
   }, [selectedQueueId, visitRows]);
 
   const selectedVisit = visitRows.find((visit) => visit.visitId === selectedVisitId) ?? null;
+  const selectedVisitLink = useMemo(() => {
+    if (!selectedVisit?.queueEntryId) {
+      return '';
+    }
+
+    const appUrl = getPublicAppUrl();
+
+    if (!appUrl) {
+      return '';
+    }
+
+    return `${appUrl}/staff/patient-records?queueId=${encodeURIComponent(selectedVisit.queueEntryId)}`;
+  }, [selectedVisit?.queueEntryId]);
   const paidVisits = visitRows.filter((visit) => visit.billing?.paymentStatus === 'paid').length;
   const importedResults = visitRows.reduce((count, visit) => count + visit.machineResults.length, 0);
+
+  useEffect(() => {
+    setVisitLinkCopied(false);
+
+    if (!selectedVisitLink) {
+      setVisitQrDataUrl('');
+      return;
+    }
+
+    let isMounted = true;
+
+    QRCode.toDataURL(selectedVisitLink, {
+      width: 220,
+      margin: 1,
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff',
+      },
+    })
+      .then((url) => {
+        if (isMounted) {
+          setVisitQrDataUrl(url);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setVisitQrDataUrl('');
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedVisitLink]);
+
+  const handleCopyVisitLink = async () => {
+    if (!selectedVisitLink || typeof navigator === 'undefined' || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(selectedVisitLink);
+      setVisitLinkCopied(true);
+    } catch {
+      setVisitLinkCopied(false);
+    }
+  };
 
   return (
     <PageLayout>
@@ -347,7 +463,7 @@ export default function PatientRecordsPage() {
         </div>
 
         <Card className="mt-8 p-6 shadow-sm">
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto]">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_repeat(2,minmax(0,0.6fr))] xl:grid-cols-[1.4fr_repeat(6,minmax(0,0.7fr))]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -358,17 +474,80 @@ export default function PatientRecordsPage() {
               />
             </div>
 
+            <Select value={serviceTypeFilter} onValueChange={setServiceTypeFilter}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Service Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Services</SelectItem>
+                <SelectItem value="Pre-Employment">Pre-Employment</SelectItem>
+                <SelectItem value="Check-Up">Check-Up</SelectItem>
+                <SelectItem value="Lab">Lab</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={labServiceFilter} onValueChange={setLabServiceFilter}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Lab Service" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Lab Services</SelectItem>
+                <SelectItem value="Blood Test">Blood Test</SelectItem>
+                <SelectItem value="Drug Test">Drug Test</SelectItem>
+                <SelectItem value="Xray">Xray</SelectItem>
+                <SelectItem value="ECG">ECG</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={visitStatusFilter} onValueChange={setVisitStatusFilter}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Visit Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="queued">Queued</SelectItem>
+                <SelectItem value="in-progress">In Progress</SelectItem>
+                <SelectItem value="awaiting-payment">Awaiting Payment</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={currentLaneFilter} onValueChange={setCurrentLaneFilter}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Current Lane" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Lanes</SelectItem>
+                <SelectItem value="GENERAL">GENERAL</SelectItem>
+                <SelectItem value="PRIORITY LANE">PRIORITY LANE</SelectItem>
+                <SelectItem value="BLOOD TEST">BLOOD TEST</SelectItem>
+                <SelectItem value="DRUG TEST">DRUG TEST</SelectItem>
+                <SelectItem value="DOCTOR">DOCTOR</SelectItem>
+                <SelectItem value="XRAY">XRAY</SelectItem>
+                <SelectItem value="ECG">ECG</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={companyFilter} onValueChange={setCompanyFilter}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Company" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Companies</SelectItem>
+                {companyOptions.map((company) => (
+                  <SelectItem key={company} value={company}>
+                    {company}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            <div className="flex gap-2">
+            <div className="flex gap-2 xl:min-w-[15rem]">
               <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setStartDate('');
-                  setEndDate('');
-                }}
-              >
-                Clear
+              <Button variant="outline" onClick={clearFilters}>
+                Clear All
               </Button>
             </div>
           </div>
@@ -542,6 +721,86 @@ export default function PatientRecordsPage() {
                     </p>
                   </div>
                 </div>
+
+                {selectedVisit.queueEntryId && (
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                    <div className="rounded-xl border border-border bg-background p-4">
+                      <div className="flex items-center gap-2">
+                        <QrCode className="h-5 w-5 text-primary" />
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Visit QR Access
+                        </p>
+                      </div>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        Medtech can scan this QR code to open this patient visit directly in the patient records page.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {selectedVisitLink ? (
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={selectedVisitLink} target="_blank">
+                              Open Visit Page
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button variant="outline" size="sm" disabled>
+                            Open Visit Page
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleCopyVisitLink()}
+                          disabled={!selectedVisitLink}
+                        >
+                          <Copy className="mr-2 h-4 w-4" />
+                          {visitLinkCopied ? 'Link Copied' : 'Copy Link'}
+                        </Button>
+                      </div>
+                      <p className="mt-3 break-all text-xs text-muted-foreground">
+                        {selectedVisitLink || 'Visit link will appear once the page URL is ready.'}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-background p-4">
+                      <div className="flex items-center justify-center rounded-xl border border-dashed border-border bg-white p-3">
+                        {visitQrDataUrl ? (
+                          <img
+                            src={visitQrDataUrl}
+                            alt={`QR code for ${selectedVisit.patientName}`}
+                            className="h-52 w-52 rounded-lg"
+                          />
+                        ) : (
+                          <div className="flex h-52 w-52 items-center justify-center text-center text-sm text-muted-foreground">
+                            QR preview unavailable.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedVisit.timelineEvents.length > 0 && (
+                  <div className="rounded-xl border border-border bg-background p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Timeline
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      {selectedVisit.timelineEvents.map((event) => (
+                        <div key={event.id} className="rounded-xl border border-border bg-muted/20 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium">{event.title}</p>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(event.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          {event.detail ? (
+                            <p className="mt-1 text-sm text-muted-foreground">{event.detail}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {selectedVisit.machineResults.length > 0 && (
                   <div className="rounded-xl border border-border bg-background p-4">

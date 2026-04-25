@@ -1,13 +1,16 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { sanitizeActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 
 export interface AdminStaffContext {
   supabase: ReturnType<typeof getSupabaseAdminClient>;
   userId: string;
   email: string;
   fullName: string;
+  role: string;
+  actionPermissions: ActionPermission[];
 }
 
-export async function requireAdminStaffAccess(request: Request): Promise<AdminStaffContext> {
+export async function requireStaffContext(request: Request): Promise<AdminStaffContext> {
   const authorization = request.headers.get('authorization');
 
   if (!authorization?.startsWith('Bearer ')) {
@@ -24,7 +27,7 @@ export async function requireAdminStaffAccess(request: Request): Promise<AdminSt
 
   const { data: profile, error: profileError } = await supabase
     .from('staff_profiles')
-    .select('id, email, full_name, role')
+    .select('id, email, full_name, role, action_permissions')
     .eq('id', userData.user.id)
     .single();
 
@@ -32,14 +35,35 @@ export async function requireAdminStaffAccess(request: Request): Promise<AdminSt
     throw new Error(profileError?.message ?? 'Staff profile not found.');
   }
 
-  if (profile.role !== 'admin') {
-    throw new Error('Admin access required.');
-  }
-
   return {
     supabase,
     userId: String(profile.id),
     email: String(profile.email ?? userData.user.email ?? ''),
     fullName: String(profile.full_name ?? ''),
+    role: String(profile.role),
+    actionPermissions: sanitizeActionPermissions(profile.action_permissions),
   };
+}
+
+export async function requireAdminStaffAccess(request: Request): Promise<AdminStaffContext> {
+  const context = await requireStaffContext(request);
+
+  if (context.role !== 'admin') {
+    throw new Error('Admin access required.');
+  }
+
+  return context;
+}
+
+export function assertActionPermission(
+  context: Pick<AdminStaffContext, 'role' | 'actionPermissions'>,
+  permission: ActionPermission
+) {
+  if (context.role === 'admin') {
+    return;
+  }
+
+  if (!context.actionPermissions.includes(permission)) {
+    throw new Error(`Missing permission: ${permission}.`);
+  }
 }

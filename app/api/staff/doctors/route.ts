@@ -5,7 +5,7 @@ import { getDoctorAssignmentSuggestion } from '@/lib/doctor-assignment';
 type DoctorOption = {
   id: string;
   fullName: string;
-  email: string;
+  email?: string;
   activeLoad: number;
   pendingConsultations: number;
   inProgressConsultations: number;

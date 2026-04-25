@@ -1,228 +1,322 @@
 'use client';
 
-import { useState } from 'react';
-import { AlertTriangle, Barcode, BarChart3 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageLayout } from '@/components/layout/page-layout';
 import { StatusBadge } from '@/components/common/status-badge';
-import { mockSpecimens } from '@/lib/mock-data';
-import { formatTime } from '@/lib/formatting';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
-const tatData = [
-  { time: '08:00', tat: 180 },
-  { time: '10:00', tat: 165 },
-  { time: '12:00', tat: 155 },
-  { time: '14:00', tat: 142 },
-  { time: '16:00', tat: 138 },
-  { time: '18:00', tat: 145 },
-  { time: '20:00', tat: 160 },
-];
+type SpecimenRow = {
+  id: string;
+  labOrderId: string;
+  visitId: string;
+  patientId: string;
+  patientName: string;
+  orderNumber: string;
+  specimenId: string;
+  testName: string;
+  lane: string;
+  status: 'pending_collection' | 'collected' | 'processing' | 'completed' | 'rejected';
+  collectedAt: string | null;
+  processingStartedAt: string | null;
+  completedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string;
+  recollectionRequested: boolean;
+  recollectionRequestedAt: string | null;
+  lastScannedAt: string | null;
+  testedBy: string;
+  testedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+async function getAccessToken() {
+  const supabase = getSupabaseBrowserClient();
+  const session = await supabase?.auth.getSession();
+  return session?.data.session?.access_token ?? '';
+}
+
+function toBadgeStatus(status: SpecimenRow['status']) {
+  switch (status) {
+    case 'pending_collection':
+      return 'pending';
+    case 'collected':
+    case 'processing':
+      return 'processing';
+    case 'completed':
+      return 'completed';
+    case 'rejected':
+      return 'critical';
+  }
+}
 
 export default function SpecimenTrackingPage() {
-  const [barcodeInput, setBarcodeInput] = useState('');
-  const [autoMode, setAutoMode] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  const [specimens, setSpecimens] = useState<SpecimenRow[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState<string | null>(null);
+  const [pageError, setPageError] = useState('');
 
-  const paginatedSpecimens = mockSpecimens.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+  const loadSpecimens = async (search = searchQuery) => {
+    try {
+      setIsLoading(true);
+      setPageError('');
+      const token = await getAccessToken();
+      const params = new URLSearchParams();
+      if (search.trim()) {
+        params.set('search', search.trim());
+      }
+
+      const response = await fetch(
+        `/api/staff/specimen-tracking${params.toString() ? `?${params.toString()}` : ''}`,
+        {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      const payload = (await response.json()) as { error?: string; specimens?: SpecimenRow[] };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Unable to load specimen tracking.');
+      }
+
+      setSpecimens(payload.specimens ?? []);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Unable to load specimen tracking.');
+      setSpecimens([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSpecimens('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const counters = useMemo(
+    () => ({
+      pending: specimens.filter((item) => item.status === 'pending_collection').length,
+      processing: specimens.filter((item) => item.status === 'processing' || item.status === 'collected').length,
+      completed: specimens.filter((item) => item.status === 'completed').length,
+      rejected: specimens.filter((item) => item.status === 'rejected').length,
+    }),
+    [specimens]
   );
 
-  const totalPages = Math.ceil(mockSpecimens.length / itemsPerPage);
+  const handleAction = async (
+    row: SpecimenRow,
+    action: 'collect' | 'start_processing' | 'complete' | 'request_recollect'
+  ) => {
+    try {
+      setIsSaving(row.id);
+      setPageError('');
+      const token = await getAccessToken();
+      const response = await fetch('/api/staff/specimen-tracking', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          itemId: row.id,
+          action,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
 
-  const pendingCount = mockSpecimens.filter((s) => s.status === 'pending').length;
-  const processingCount = mockSpecimens.filter((s) => s.status === 'processing').length;
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Unable to update specimen.');
+      }
+
+      await loadSpecimens();
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Unable to update specimen.');
+    } finally {
+      setIsSaving(null);
+    }
+  };
 
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        {/* Header */}
         <div>
           <h1 className="text-3xl font-bold">Specimen Tracking</h1>
-          <p className="text-muted-foreground mt-2">
-            Real-time lifecycle monitoring of clinical samples from collection to analysis.
+          <p className="mt-2 text-muted-foreground">
+            Review tested lab-order summaries and see who uploaded or completed the machine result.
           </p>
         </div>
 
-        {/* KPIs */}
-        <div className="mt-8 grid grid-cols-3 gap-4">
-          <Card className="p-4 border-l-4 border-orange-400">
-            <p className="text-xs font-semibold text-muted-foreground mb-1">PENDING</p>
-            <p className="text-3xl font-bold text-orange-600">{pendingCount}</p>
+        {pageError ? (
+          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {pageError}
+          </div>
+        ) : null}
+
+        <div className="mt-8 grid gap-4 md:grid-cols-4">
+          <Card className="border-l-4 border-orange-400 p-4">
+            <p className="text-xs font-semibold text-muted-foreground">PENDING COLLECTION</p>
+            <p className="mt-2 text-3xl font-bold text-orange-600">{counters.pending}</p>
           </Card>
-          <Card className="p-4 border-l-4 border-blue-400">
-            <p className="text-xs font-semibold text-muted-foreground mb-1">PROCESSING</p>
-            <p className="text-3xl font-bold text-blue-600">{processingCount}</p>
+          <Card className="border-l-4 border-blue-400 p-4">
+            <p className="text-xs font-semibold text-muted-foreground">PROCESSING</p>
+            <p className="mt-2 text-3xl font-bold text-blue-600">{counters.processing}</p>
           </Card>
-          <Card className="p-4 border-l-4 border-green-400">
-            <p className="text-xs font-semibold text-muted-foreground mb-1">COMPLETED</p>
-            <p className="text-3xl font-bold text-green-600">
-              {mockSpecimens.filter((s) => s.status === 'done').length}
-            </p>
+          <Card className="border-l-4 border-green-400 p-4">
+            <p className="text-xs font-semibold text-muted-foreground">COMPLETED</p>
+            <p className="mt-2 text-3xl font-bold text-green-600">{counters.completed}</p>
+          </Card>
+          <Card className="border-l-4 border-red-400 p-4">
+            <p className="text-xs font-semibold text-muted-foreground">REJECTED</p>
+            <p className="mt-2 text-3xl font-bold text-red-600">{counters.rejected}</p>
           </Card>
         </div>
 
-        {/* Barcode Input */}
         <Card className="mt-8 p-6">
-          <div className="flex gap-4 items-end mb-4">
-            <div className="flex-1">
-              <label className="text-sm font-semibold text-muted-foreground mb-2 block">
-                SCAN BARCODE / ENTER SPECIMEN ID
-              </label>
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Scanning active..."
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                className="h-12"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search specimen, patient, order number, or test..."
+                className="pl-10"
               />
             </div>
             <div className="flex gap-2">
-              <Button variant="outline">Manual Entry</Button>
-              <Button className="px-6">Track Now</Button>
+              <Button variant="outline" onClick={() => void loadSpecimens(searchQuery)}>
+                Search
+              </Button>
+              <Button variant="outline" onClick={() => void loadSpecimens('')}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh
+              </Button>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoMode}
-                onChange={(e) => setAutoMode(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              AUTO-MODE
-            </label>
           </div>
         </Card>
 
-        {/* Specimens Table */}
         <Card className="mt-8 p-6">
-          <h2 className="text-lg font-bold mb-6">Active Specimens (22 of 22)</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-3 font-semibold text-muted-foreground">ID</th>
-                  <th className="text-left py-3 font-semibold text-muted-foreground">PATIENT NAME</th>
-                  <th className="text-left py-3 font-semibold text-muted-foreground">TEST TYPE</th>
-                  <th className="text-left py-3 font-semibold text-muted-foreground">SPECIMEN</th>
-                  <th className="text-left py-3 font-semibold text-muted-foreground">STATUS</th>
-                  <th className="text-left py-3 font-semibold text-muted-foreground">TIMESTAMP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedSpecimens.map((specimen, idx) => (
-                  <tr key={idx} className="border-b border-border hover:bg-muted/50">
-                    <td className="py-4 font-bold">{specimen.id}</td>
-                    <td className="py-4">
-                      <p className="font-medium">{specimen.patientName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        DOB: 12 May 1964
-                      </p>
-                    </td>
-                    <td className="py-4">{specimen.testType}</td>
-                    <td className="py-4 flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${
-                        specimen.specimenType === 'Whole Blood' ? 'bg-red-500' :
-                        specimen.specimenType === 'Serum' ? 'bg-yellow-500' : 'bg-blue-500'
-                      }`}></span>
-                      {specimen.specimenType}
-                    </td>
-                    <td className="py-4">
-                      <StatusBadge status={specimen.status} />
-                    </td>
-                    <td className="py-4 text-muted-foreground">
-                      {formatTime(specimen.collectedAt)}
-                      <p className="text-xs">TODAY</p>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold">Tested Summary</h2>
+              <p className="text-sm text-muted-foreground">
+                Each row is backed by lab-order records and machine result uploads.
+              </p>
+            </div>
+            <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+              {specimens.length} specimens
+            </span>
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between mt-6 pt-6 border-t border-border">
-            <p className="text-sm text-muted-foreground">
-              SHOWING {paginatedSpecimens.length} OF {mockSpecimens.length} ACTIVE SPECIMENS
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                disabled={currentPage === 1}
-              >
-                ←
-              </Button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                <Button
-                  key={page}
-                  variant={currentPage === page ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setCurrentPage(page)}
-                >
-                  {page}
-                </Button>
-              ))}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                disabled={currentPage === totalPages}
-              >
-                →
-              </Button>
+          <div className="mt-6 overflow-hidden rounded-xl border">
+            <div className="max-h-[42rem] overflow-auto">
+              <table className="w-full min-w-[74rem] text-sm">
+                <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                  <tr className="border-b border-border">
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Specimen</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Patient</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Test</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Lane</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Tested By</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Timeline</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {specimens.length > 0 ? (
+                    specimens.map((row) => (
+                      <tr key={row.id} className="border-b border-border">
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{row.specimenId}</p>
+                          <p className="text-xs text-muted-foreground">{row.orderNumber || 'No lab order no.'}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="font-medium">{row.patientName || 'Unknown patient'}</p>
+                          <p className="text-xs text-muted-foreground">{row.patientId}</p>
+                        </td>
+                        <td className="px-4 py-3">{row.testName}</td>
+                        <td className="px-4 py-3">{row.lane}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-2">
+                            <StatusBadge status={toBadgeStatus(row.status)} />
+                            {row.recollectionRequested ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                Recollection requested
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="font-medium">{row.testedBy || 'Not uploaded yet'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {row.testedAt ? new Date(row.testedAt).toLocaleString() : 'No machine result'}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          <p>Collected: {row.collectedAt ? new Date(row.collectedAt).toLocaleString() : 'Not yet'}</p>
+                          <p>Processing: {row.processingStartedAt ? new Date(row.processingStartedAt).toLocaleString() : 'Not yet'}</p>
+                          <p>Completed: {row.completedAt ? new Date(row.completedAt).toLocaleString() : 'Not yet'}</p>
+                          {row.rejectionReason ? <p className="text-red-600">Reason: {row.rejectionReason}</p> : null}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isSaving === row.id || row.status !== 'pending_collection'}
+                              onClick={() => void handleAction(row, 'collect')}
+                            >
+                              Collect
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                isSaving === row.id ||
+                                !['collected', 'pending_collection'].includes(row.status)
+                              }
+                              onClick={() => void handleAction(row, 'start_processing')}
+                            >
+                              Process
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isSaving === row.id || row.status === 'completed'}
+                              onClick={() => void handleAction(row, 'complete')}
+                            >
+                              Complete
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isSaving === row.id}
+                              onClick={() => void handleAction(row, 'request_recollect')}
+                            >
+                              Recollect
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                        {isLoading ? 'Loading specimen records...' : 'No specimen records matched the current search.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </Card>
-
-        {/* TAT Trend & Critical Alerts */}
-        <div className="mt-8 grid grid-cols-3 gap-8">
-          {/* Chart */}
-          <div className="col-span-2">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-bold flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5" />
-                  Turnaround Time (TAT) Trend
-                </h2>
-                <span className="inline-block text-xs font-bold px-2 py-1 bg-accent/20 text-accent rounded">
-                  WITHIN BENCHMARKS
-                </span>
-              </div>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={tatData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="time" stroke="#888" />
-                  <YAxis stroke="#888" />
-                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e0e0e0' }} />
-                  <Bar dataKey="tat" fill="#2563eb" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
-          </div>
-
-          {/* Critical Alerts */}
-          <Card className="p-6 border-l-4 border-destructive">
-            <div className="flex items-center gap-2 mb-6">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
-              <h2 className="text-lg font-bold">Critical Action Required</h2>
-            </div>
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <p className="text-sm font-semibold text-red-900 mb-2">#SP-8991 Flagged</p>
-              <p className="text-xs text-red-800 mb-4">
-                Hemolysis detected in specimen. Re-collection requested for Patient: David Chen.
-              </p>
-              <Button className="w-full bg-destructive hover:bg-destructive/90">
-                Review Flags
-              </Button>
-            </div>
-          </Card>
-        </div>
       </div>
     </PageLayout>
   );

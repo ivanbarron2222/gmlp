@@ -1,20 +1,38 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { AlertCircle, CheckCircle2, Printer, QrCode } from 'lucide-react';
 import {
   addPendingRegistration,
+  PendingRegistration,
   RegistrationFormInput,
   RegistrationService,
   RequestedLabService,
 } from '@/lib/registration-store';
 
+type PublicLabService = {
+  code: string;
+  name: string;
+  category: string;
+  amount: number;
+  serviceLane: string | null;
+};
+
+type PublicPartnerCompany = {
+  id: string;
+  companyName: string;
+  requirements?: Record<string, string[]>;
+};
+
 export default function PatientRegistrationPage() {
-  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [companyOptions, setCompanyOptions] = useState<PublicPartnerCompany[]>([]);
+  const [labServices, setLabServices] = useState<PublicLabService[]>([]);
   const [companyMode, setCompanyMode] = useState<'select' | 'manual'>('select');
   const [formData, setFormData] = useState({
     firstName: '',
@@ -30,9 +48,12 @@ export default function PatientRegistrationPage() {
     province: '',
     serviceNeeded: '',
     requestedLabService: '',
+    selectedServiceCodes: [] as string[],
     notes: '',
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submittedRegistration, setSubmittedRegistration] = useState<PendingRegistration | null>(null);
+  const [queueQrDataUrl, setQueueQrDataUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
@@ -46,7 +67,11 @@ export default function PatientRegistrationPage() {
         }
 
         return (await response.json()) as {
-          companies?: Array<{ companyName?: string }>;
+          companies?: Array<{
+            id?: string;
+            companyName?: string;
+            requirements?: Record<string, string[]>;
+          }>;
         };
       })
       .then((payload) => {
@@ -55,8 +80,12 @@ export default function PatientRegistrationPage() {
         }
 
         const nextOptions = (payload.companies ?? [])
-          .map((company) => String(company.companyName ?? '').trim())
-          .filter(Boolean);
+          .map((company) => ({
+            id: String(company.id ?? ''),
+            companyName: String(company.companyName ?? '').trim(),
+            requirements: company.requirements ?? {},
+          }))
+          .filter((company) => company.id && company.companyName);
 
         setCompanyOptions(nextOptions);
       })
@@ -71,15 +100,60 @@ export default function PatientRegistrationPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch('/api/public/service-catalog', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Unable to load lab services.');
+        }
+
+        return (await response.json()) as { labServices?: PublicLabService[] };
+      })
+      .then((payload) => {
+        if (isMounted) {
+          setLabServices(payload.labServices ?? []);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setLabServices([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      ...(name === 'serviceNeeded' && value !== 'Lab' ? { requestedLabService: '' } : {}),
-      [name]: value,
-    }));
+    setFormData((prev) => {
+      if (name !== 'serviceNeeded') {
+        return {
+          ...prev,
+          [name]: value,
+        };
+      }
+
+      const company = companyOptions.find((option) => option.companyName === prev.company);
+      const requirements =
+        value === 'Pre-Employment'
+          ? company?.requirements?.['pre-employment'] ?? []
+          : value === 'Lab'
+            ? company?.requirements?.lab ?? []
+            : [];
+
+      return {
+        ...prev,
+        serviceNeeded: value,
+        requestedLabService: value === 'Lab' ? prev.requestedLabService : '',
+        selectedServiceCodes: requirements,
+      };
+    });
   };
 
   const handleGenderSelect = (gender: string) => {
@@ -90,9 +164,67 @@ export default function PatientRegistrationPage() {
   };
 
   const isKnownCompany = useMemo(
-    () => companyOptions.includes(formData.company),
+    () => companyOptions.some((company) => company.companyName === formData.company),
     [companyOptions, formData.company]
   );
+
+  const selectedCompany = useMemo(
+    () => companyOptions.find((company) => company.companyName === formData.company) ?? null,
+    [companyOptions, formData.company]
+  );
+
+  const selectedLabServices = useMemo(
+    () => labServices.filter((service) => formData.selectedServiceCodes.includes(service.code)),
+    [formData.selectedServiceCodes, labServices]
+  );
+
+  const getRequestedLabServiceFromCodes = (serviceCodes: string[]) => {
+    const primaryService = labServices.find((service) => serviceCodes.includes(service.code));
+
+    return primaryService?.serviceLane === 'drug_test'
+      ? 'Drug Test'
+      : primaryService?.serviceLane === 'xray'
+        ? 'Xray'
+        : primaryService?.serviceLane === 'ecg'
+          ? 'ECG'
+          : serviceCodes.length > 0
+            ? 'Blood Test'
+            : '';
+  };
+
+  useEffect(() => {
+    if (!selectedCompany || formData.serviceNeeded === 'Check-Up') {
+      return;
+    }
+
+    const requirements =
+      formData.serviceNeeded === 'Pre-Employment'
+        ? selectedCompany.requirements?.['pre-employment'] ?? []
+        : formData.serviceNeeded === 'Lab'
+          ? selectedCompany.requirements?.lab ?? []
+          : [];
+
+    if (!requirements.length) {
+      return;
+    }
+
+    setFormData((prev) => {
+      const alreadySelected =
+        requirements.length === prev.selectedServiceCodes.length &&
+        requirements.every((code) => prev.selectedServiceCodes.includes(code));
+
+      return alreadySelected
+        ? prev
+        : {
+            ...prev,
+            selectedServiceCodes: requirements,
+            requestedLabService:
+              prev.serviceNeeded === 'Lab'
+                ? getRequestedLabServiceFromCodes(requirements)
+                : prev.requestedLabService,
+          };
+    });
+  }, [formData.serviceNeeded, labServices, selectedCompany]);
 
   const handleCompanySelect = (value: string) => {
     if (value === '__manual__') {
@@ -100,15 +232,39 @@ export default function PatientRegistrationPage() {
       setFormData((prev) => ({
         ...prev,
         company: isKnownCompany ? '' : prev.company,
+        selectedServiceCodes: prev.serviceNeeded === 'Pre-Employment' ? [] : prev.selectedServiceCodes,
       }));
       return;
     }
+
+    const company = companyOptions.find((option) => option.companyName === value);
+    const requirements =
+      formData.serviceNeeded === 'Pre-Employment'
+        ? company?.requirements?.['pre-employment'] ?? []
+        : formData.serviceNeeded === 'Lab'
+          ? company?.requirements?.lab ?? []
+          : [];
 
     setCompanyMode('select');
     setFormData((prev) => ({
       ...prev,
       company: value,
+      selectedServiceCodes: requirements.length > 0 ? requirements : prev.selectedServiceCodes,
     }));
+  };
+
+  const handleLabServiceToggle = (serviceCode: string, checked: boolean) => {
+    setFormData((prev) => {
+      const selectedServiceCodes = checked
+        ? Array.from(new Set([...prev.selectedServiceCodes, serviceCode]))
+        : prev.selectedServiceCodes.filter((code) => code !== serviceCode);
+
+      return {
+        ...prev,
+        selectedServiceCodes,
+        requestedLabService: getRequestedLabServiceFromCodes(selectedServiceCodes),
+      };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -117,12 +273,24 @@ export default function PatientRegistrationPage() {
     setSubmitError('');
 
     try {
-      await addPendingRegistration({
+      if (
+        (formData.serviceNeeded === 'Lab' || formData.serviceNeeded === 'Pre-Employment') &&
+        formData.selectedServiceCodes.length === 0
+      ) {
+        throw new Error('Please select at least one lab test.');
+      }
+
+      const registration = await addPendingRegistration({
         ...formData,
         gender: formData.gender.toLowerCase(),
         serviceNeeded: formData.serviceNeeded as RegistrationService,
-        requestedLabService: formData.requestedLabService as RequestedLabService | '',
+        requestedLabService:
+          formData.serviceNeeded === 'Lab'
+            ? (formData.requestedLabService as RequestedLabService | '')
+            : '',
+        selectedServiceCodes: formData.selectedServiceCodes,
       } as RegistrationFormInput);
+      setSubmittedRegistration(registration);
       setIsSubmitted(true);
     } catch (error) {
       setSubmitError(
@@ -137,7 +305,25 @@ export default function PatientRegistrationPage() {
     .filter(Boolean)
     .join(' ');
 
+  useEffect(() => {
+    const queueId = submittedRegistration?.queueEntry?.id;
+    if (!queueId || typeof window === 'undefined') {
+      setQueueQrDataUrl('');
+      return;
+    }
+
+    const scanUrl = new URL(`/scan/queue/${queueId}`, window.location.origin).toString();
+    QRCode.toDataURL(scanUrl, { margin: 1, width: 160 })
+      .then((dataUrl) => setQueueQrDataUrl(dataUrl))
+      .catch(() => setQueueQrDataUrl(''));
+  }, [submittedRegistration?.queueEntry?.id]);
+
   if (isSubmitted) {
+    const queueEntry = submittedRegistration?.queueEntry;
+    const submittedAt = submittedRegistration?.submittedAt
+      ? new Date(submittedRegistration.submittedAt).toLocaleString()
+      : new Date().toLocaleString();
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-background to-secondary flex items-center justify-center p-4 py-12">
         <Card className="w-full max-w-2xl">
@@ -150,27 +336,66 @@ export default function PatientRegistrationPage() {
             </p>
             <h1 className="text-3xl font-bold mb-3 sm:text-4xl">Registration Complete</h1>
             <p className="text-sm text-muted-foreground mb-8 sm:text-base">
-              Your self-registration has been successfully submitted. Please proceed to the reception desk for verification and the next steps in your visit.
+              Your queue slip has been generated. Please wait for your queue number to be called.
             </p>
 
-            <div className="bg-accent/10 border border-accent/30 rounded-xl p-5 text-left text-sm mb-6">
-              <p className="font-semibold text-accent mb-3">Registration Details</p>
-              <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                <p>Name: <span className="font-medium text-foreground">{fullName}</span></p>
-                <p>Company: <span className="font-medium text-foreground">{formData.company || 'N/A'}</span></p>
-                <p>Date of Birth: <span className="font-medium text-foreground">{formData.birthDate}</span></p>
-                <p>Contact: <span className="font-medium text-foreground">{formData.contactNumber}</span></p>
-                <p>Email: <span className="font-medium text-foreground">{formData.emailAddress}</span></p>
-                <p>Service: <span className="font-medium text-foreground">{formData.serviceNeeded}</span></p>
-                {formData.serviceNeeded === 'Lab' && (
-                  <p>Lab Area: <span className="font-medium text-foreground">{formData.requestedLabService}</span></p>
+            <div className="bg-accent/10 border border-accent/30 rounded-xl p-5 text-left text-sm mb-6 print:border-foreground print:bg-white">
+              <div className="mb-4 rounded-lg border border-accent/30 bg-background p-4 text-center print:border-foreground">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Registration Slip
+                </p>
+                <p className="mt-2 text-3xl font-black tracking-tight text-primary print:text-foreground">
+                  {queueEntry?.queueNumber ?? submittedRegistration?.registrationCode ?? 'Pending'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">{submittedAt}</p>
+              </div>
+              <div className="grid gap-5 sm:grid-cols-[1fr_auto]">
+                <div>
+                  <p className="font-semibold text-accent mb-3 print:text-foreground">Queue Details</p>
+                  <div className="grid gap-2 text-xs text-muted-foreground">
+                    <p>Name: <span className="font-medium text-foreground">{fullName}</span></p>
+                    <p>Company: <span className="font-medium text-foreground">{formData.company || 'N/A'}</span></p>
+                    <p>Service: <span className="font-medium text-foreground">{queueEntry?.serviceType ?? formData.serviceNeeded}</span></p>
+                    <p>Station: <span className="font-medium text-foreground">{queueEntry?.counter ?? 'General Intake'}</span></p>
+                    <p>Pending: <span className="font-medium text-foreground">{queueEntry?.pendingLanes?.join(', ') || 'N/A'}</span></p>
+                    <p>Lab No: <span className="font-medium text-foreground">{submittedRegistration?.labNumbers?.join(', ') || 'N/A'}</span></p>
+                    {selectedLabServices.length > 0 && (
+                      <p>
+                        Selected Tests:{' '}
+                        <span className="font-medium text-foreground">
+                          {selectedLabServices.map((service) => service.name).join(', ')}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {queueQrDataUrl ? (
+                  <div className="rounded-lg border bg-white p-3 text-center">
+                    <img src={queueQrDataUrl} alt="Queue QR code" className="h-32 w-32" />
+                    <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Scan for Visit
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex h-36 w-36 items-center justify-center rounded-lg border bg-white text-muted-foreground">
+                    <QrCode className="h-10 w-10" />
+                  </div>
                 )}
               </div>
               <p className="text-xs text-muted-foreground mt-4">
-                This registration is valid for <strong>24 hours</strong> at the reception desk.
+                Staff may scan this QR code to open the patient visit/profile.
               </p>
             </div>
 
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button type="button" className="h-11 flex-1" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" />
+                Print Slip
+              </Button>
+              <Button type="button" variant="outline" className="h-11 flex-1" onClick={() => window.location.assign('/')}>
+                Back to Portal
+              </Button>
+            </div>
           </div>
         </Card>
       </div>
@@ -252,8 +477,8 @@ export default function PatientRegistrationPage() {
                 >
                   <option value="">Select a company</option>
                   {companyOptions.map((company) => (
-                    <option key={company} value={company}>
-                      {company}
+                    <option key={company.id} value={company.companyName}>
+                      {company.companyName}
                     </option>
                   ))}
                   <option value="__manual__">Other / Type manually</option>
@@ -378,23 +603,57 @@ export default function PatientRegistrationPage() {
               </div>
 
               {formData.serviceNeeded === 'Lab' && (
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-xs font-semibold text-muted-foreground mb-2 block">
-                    LAB SERVICE
+                    LAB TEST CHECKLIST
                   </label>
-                  <select
-                    name="requestedLabService"
-                    value={formData.requestedLabService}
-                    onChange={handleInputChange}
-                    required
-                    className="h-12 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  >
-                    <option value="">Select a lab service</option>
-                    <option value="Blood Test">Blood Test</option>
-                    <option value="Drug Test">Drug Test</option>
-                    <option value="Xray">Xray</option>
-                    <option value="ECG">ECG</option>
-                  </select>
+                  <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 sm:grid-cols-2">
+                    {labServices.map((service) => (
+                      <label key={service.code} className="flex items-start gap-3 rounded-md bg-background p-3 text-sm">
+                        <Checkbox
+                          checked={formData.selectedServiceCodes.includes(service.code)}
+                          onCheckedChange={(checked) => handleLabServiceToggle(service.code, checked === true)}
+                        />
+                        <span>
+                          <span className="block font-medium">{service.name}</span>
+                          <span className="text-xs text-muted-foreground">{service.category}</span>
+                        </span>
+                      </label>
+                    ))}
+                    {!labServices.length && (
+                      <p className="text-sm text-muted-foreground">No active lab services are available.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {formData.serviceNeeded === 'Pre-Employment' && (
+                <div className="md:col-span-2">
+                  <label className="text-xs font-semibold text-muted-foreground mb-2 block">
+                    PRE-EMPLOYMENT REQUIREMENTS
+                  </label>
+                  <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 sm:grid-cols-2">
+                    {labServices.map((service) => (
+                      <label key={service.code} className="flex items-start gap-3 rounded-md bg-background p-3 text-sm">
+                        <Checkbox
+                          checked={formData.selectedServiceCodes.includes(service.code)}
+                          onCheckedChange={(checked) => handleLabServiceToggle(service.code, checked === true)}
+                        />
+                        <span>
+                          <span className="block font-medium">{service.name}</span>
+                          <span className="text-xs text-muted-foreground">{service.category}</span>
+                        </span>
+                      </label>
+                    ))}
+                    {!labServices.length && (
+                      <p className="text-sm text-muted-foreground">No active lab services are available.</p>
+                    )}
+                  </div>
+                  {selectedCompany?.requirements?.['pre-employment']?.length ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      The selected partner company has pre-employment requirements configured.
+                    </p>
+                  ) : null}
                 </div>
               )}
 

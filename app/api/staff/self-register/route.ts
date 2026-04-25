@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getDefaultActionPermissions } from '@/lib/action-permissions';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getDefaultAllowedModules } from '@/lib/staff-modules';
 import { mapDbRoleToStationRole } from '@/lib/station-role';
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClient();
     const stationRole = mapDbRoleToStationRole(body.role);
     const allowedModules = stationRole ? getDefaultAllowedModules(stationRole) : ['/dashboard'];
+    const actionPermissions = stationRole ? getDefaultActionPermissions(stationRole) : [];
 
     const { data: createdUser, error: createUserError } = await supabase.auth.admin.createUser({
       email: body.email.trim(),
@@ -62,6 +64,7 @@ export async function POST(request: Request) {
       assigned_lane: toAssignedLane(body.role),
       is_active: false,
       allowed_modules: allowedModules,
+      action_permissions: actionPermissions,
     });
 
     if (profileError) {

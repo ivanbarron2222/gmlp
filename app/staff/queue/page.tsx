@@ -68,7 +68,7 @@ function getEntryActionPath(entry: QueueEntry, lane?: QueueLane | null) {
 
 function getEntryActionLabel(lane?: QueueLane | null) {
   if (lane && lane !== 'GENERAL') {
-    return 'Open Active Visit';
+    return lane === 'DOCTOR' ? 'Open Consultation' : 'Open Station Task';
   }
 
   return 'Open Patient Visit';
@@ -129,6 +129,14 @@ export default function QueueManagementPage() {
     () => queue.filter((item) => item.status === 'completed').slice(-10).reverse(),
     [queue]
   );
+  const missedQueue = useMemo(
+    () => queue.filter((item) => item.status === 'missed').slice(-10).reverse(),
+    [queue]
+  );
+  const requeueRequiredQueue = useMemo(
+    () => queue.filter((item) => item.status === 'requeue_required').slice(-10).reverse(),
+    [queue]
+  );
 
   const servingCount = useMemo(
     () => queue.filter((item) => item.status === 'serving').length,
@@ -151,24 +159,14 @@ export default function QueueManagementPage() {
     queue.filter(
       (item) =>
         item.currentLane === lane &&
-        item.status === 'waiting' &&
-        (lane !== 'DOCTOR' ||
-          !staffProfileId ||
-          stationRole !== 'doctor' ||
-          !item.assignedDoctorId ||
-          item.assignedDoctorId === staffProfileId)
+        item.status === 'waiting'
     );
 
   const getLaneServing = (lane: QueueLane) =>
     queue.filter(
       (item) =>
         item.currentLane === lane &&
-        item.status === 'serving' &&
-        (lane !== 'DOCTOR' ||
-          !staffProfileId ||
-          stationRole !== 'doctor' ||
-          !item.assignedDoctorId ||
-          item.assignedDoctorId === staffProfileId)
+        item.status === 'serving'
     );
 
   const handleCallNext = async (lane: QueueLane) => {
@@ -190,6 +188,14 @@ export default function QueueManagementPage() {
 
   const handleAddReferral = async (queueId: string, lane: 'BLOOD TEST' | 'DRUG TEST' | 'XRAY' | 'ECG') => {
     const nextQueue = await postQueueAction({ action: 'add_referral', queueId, lane });
+    setQueue(nextQueue);
+  };
+
+  const handleQueueStatusAction = async (
+    action: 'mark_missed' | 'require_requeue' | 'requeue' | 'acknowledge_response',
+    queueId: string
+  ) => {
+    const nextQueue = await postQueueAction({ action, queueId });
     setQueue(nextQueue);
   };
 
@@ -285,6 +291,26 @@ export default function QueueManagementPage() {
                         </div>
 
                         <div className="flex flex-wrap gap-2 lg:max-w-sm lg:justify-end">
+                          <Button
+                            size="sm"
+                            onClick={() => void handleQueueStatusAction('acknowledge_response', item.id)}
+                          >
+                            Patient Present
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleQueueStatusAction('mark_missed', item.id)}
+                          >
+                            Mark Missed
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
+                          >
+                            Require Re-Queue
+                          </Button>
                           {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
                             <>
                               <Button
@@ -423,13 +449,13 @@ export default function QueueManagementPage() {
                 emphasized
               />
               <SummaryCard
-                label="General Queue"
-                value={generalQueue.length}
+                label="Re-Queue Required"
+                value={requeueRequiredQueue.length}
                 icon={<Users className="h-4 w-4 text-muted-foreground" />}
               />
               <SummaryCard
-                label="Priority Lane"
-                value={priorityQueue.length}
+                label="Missed"
+                value={missedQueue.length}
                 icon={<Users className="h-4 w-4 text-red-600" />}
               />
             </div>
@@ -572,6 +598,26 @@ export default function QueueManagementPage() {
                                   </div>
 
                                   <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => void handleQueueStatusAction('acknowledge_response', item.id)}
+                                    >
+                                      Patient Present
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => void handleQueueStatusAction('mark_missed', item.id)}
+                                    >
+                                      Mark Missed
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
+                                    >
+                                      Require Re-Queue
+                                    </Button>
                                     {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
                                       <>
                                         <Button
@@ -653,6 +699,81 @@ export default function QueueManagementPage() {
                 );
               })}
             </div>
+
+            <Card className="p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-bold">Missed / Re-Queue</h2>
+                <span className="text-xs font-semibold text-muted-foreground">
+                  {missedQueue.length + requeueRequiredQueue.length} patients
+                </span>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Re-Queue Required
+                  </p>
+                  <div className="space-y-3">
+                    {requeueRequiredQueue.length > 0 ? (
+                      requeueRequiredQueue.map((item) => (
+                        <div key={item.id} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                          <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
+                          <QueueMeta item={item} />
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="mt-3"
+                            onClick={() => void handleQueueStatusAction('requeue', item.id)}
+                          >
+                            Re-Queue Patient
+                          </Button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                        No patients need re-queue right now.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Missed Calls
+                  </p>
+                  <div className="space-y-3">
+                    {missedQueue.length > 0 ? (
+                      missedQueue.map((item) => (
+                        <div key={item.id} className="rounded-xl border border-red-200 bg-red-50 p-4">
+                          <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
+                          <QueueMeta item={item} />
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void handleQueueStatusAction('requeue', item.id)}
+                            >
+                              Re-Queue
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
+                            >
+                              Require Re-Queue
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                        No missed calls.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
 
             <Card className="p-6">
               <div className="mb-4 flex items-center justify-between">

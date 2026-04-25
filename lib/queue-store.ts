@@ -1,4 +1,4 @@
-export type QueueStatus = 'waiting' | 'serving' | 'completed';
+export type QueueStatus = 'waiting' | 'serving' | 'missed' | 'requeue_required' | 'completed';
 export type QueueLane =
   | 'GENERAL'
   | 'BLOOD TEST'
@@ -26,6 +26,11 @@ export interface QueueEntry {
   status: QueueStatus;
   createdAt: string;
   calledAt?: string;
+  missedAt?: string;
+  requeueRequiredAt?: string;
+  notificationPingCount?: number;
+  lastPingAt?: string;
+  responseAt?: string;
   assignedDoctorId?: string;
   assignedDoctorName?: string;
 }
@@ -145,7 +150,7 @@ export function getQueueWorkflowPath(queueId: string, lane: QueueLane) {
 
   return `/staff/lab-orders?queueId=${encodeURIComponent(queueId)}&lane=${encodeURIComponent(
     lane
-  )}`;
+  )}&mode=station`;
 }
 
 export function addQueueEntry(

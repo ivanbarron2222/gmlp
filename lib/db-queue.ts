@@ -9,7 +9,14 @@ type DbQueueLane =
   | 'doctor'
   | 'xray'
   | 'ecg';
-type DbQueueStatus = 'waiting' | 'now_serving' | 'completed' | 'cancelled' | 'skipped';
+type DbQueueStatus =
+  | 'waiting'
+  | 'now_serving'
+  | 'missed'
+  | 'requeue_required'
+  | 'completed'
+  | 'cancelled'
+  | 'skipped';
 type DbQueueStepStatus = 'pending' | 'serving' | 'completed' | 'skipped' | 'cancelled';
 type DbLabService = 'blood_test' | 'drug_test' | 'xray' | 'ecg' | null;
 
@@ -24,17 +31,26 @@ export interface QueueEntryRow {
   priority_lane: boolean;
   created_at: string;
   now_serving_at: string | null;
+  missed_at?: string | null;
+  requeue_required_at?: string | null;
+  notification_ping_count?: number | null;
+  last_ping_at?: string | null;
+  response_at?: string | null;
   completed_at: string | null;
   patients:
     | {
         first_name: string;
         middle_name: string | null;
         last_name: string;
+        contact_number?: string | null;
+        email_address?: string | null;
       }
     | Array<{
         first_name: string;
         middle_name: string | null;
         last_name: string;
+        contact_number?: string | null;
+        email_address?: string | null;
       }>
     | null;
   queue_steps:
@@ -98,6 +114,10 @@ export function dbStatusToUiStatus(status: DbQueueStatus): QueueStatus {
   switch (status) {
     case 'now_serving':
       return 'serving';
+    case 'missed':
+      return 'missed';
+    case 'requeue_required':
+      return 'requeue_required';
     case 'completed':
       return 'completed';
     default:
@@ -175,6 +195,11 @@ export function mapQueueEntryRow(row: QueueEntryRow): QueueEntry {
     status: dbStatusToUiStatus(row.queue_status),
     createdAt: row.created_at,
     calledAt: row.now_serving_at ?? undefined,
+    missedAt: row.missed_at ?? undefined,
+    requeueRequiredAt: row.requeue_required_at ?? undefined,
+    notificationPingCount: Number(row.notification_ping_count ?? 0),
+    lastPingAt: row.last_ping_at ?? undefined,
+    responseAt: row.response_at ?? undefined,
     assignedDoctorId: row.assigned_doctor_id ?? undefined,
     assignedDoctorName: row.assigned_doctor_name ?? undefined,
   };

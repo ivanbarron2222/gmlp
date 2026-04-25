@@ -15,15 +15,19 @@ function formatClock(date: Date) {
 }
 
 function belongsToLane(item: QueueEntry, lane: DisplayLane) {
+  if (item.status !== 'waiting' && item.status !== 'serving') {
+    return false;
+  }
+
   if (lane === 'PRIORITY LANE') {
-    return item.currentLane === 'GENERAL' && item.priority && item.status !== 'completed';
+    return item.currentLane === 'GENERAL' && item.priority;
   }
 
   if (lane === 'GENERAL') {
-    return item.currentLane === 'GENERAL' && !item.priority && item.status !== 'completed';
+    return item.currentLane === 'GENERAL' && !item.priority;
   }
 
-  return item.currentLane === lane && item.status !== 'completed';
+  return item.currentLane === lane;
 }
 
 export default function QueueDisplayPage() {

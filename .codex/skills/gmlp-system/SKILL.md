@@ -1,4 +1,4 @@
----
+﻿---
 name: gmlp-system
 description: Use for work on the Globalife Medical Laboratory & Polyclinic System Next.js app, including patient self-registration, login, staff pages, queue management, public queue display, branding, Supabase-backed clinic workflows, and admin settings.
 ---
@@ -314,3 +314,62 @@ Still pending after the latest pass:
 - When touching auth or data access, extend the Supabase-backed path rather than reintroducing localStorage
 - If editing hidden `.codex` or some migration files on Windows and `apply_patch` fails with sandbox refresh issues, a direct file write is acceptable as fallback
 
+
+## Product Roadmap
+
+Use this roadmap when the user asks what major features are still needed, what should come next, or how to phase the system into a more production-ready clinic workflow.
+
+### Phase 1: Operational Control
+
+These features close the most important daily-process gaps first:
+- `Specimen Tracking`
+  - track specimen collection, handoff, processing, rejection, and completion
+  - connect specimen state to `lab_order_items`, queue progress, and result readiness
+- `Operational Exception Handling`
+  - support duplicate-patient merge, visit reopen, corrected patient details, billing cancellation/refund, and controlled queue overrides
+  - every exception action should leave an audit trail
+- `Result and Report History`
+  - keep version history for report edits, validation actions, release actions, and review remarks
+  - surface who changed what and when
+- `Role-Based Permission Refinement`
+  - move beyond page-level access into action-level permissions such as validate report, release result, edit billing, void payment, and reopen visit
+- `Patient Record Filters and Audit Tools`
+  - continue improving `/staff/patient-records` with richer filters, export by filter, and a full patient timeline across registration, queue, billing, machine upload, validation, and release
+
+### Phase 2: Workflow Intelligence
+
+These features improve coordination, automation, and reporting after the core controls are stable:
+- `Doctor Assignment Rules`
+  - support preferred returning doctor, load balancing, manual override, and doctor availability-aware assignment
+- `Partner Company Integration`
+  - replace free-text company capture with managed company selection, package templates, pricing agreements, and company-level billing/reporting
+- `Notification System`
+  - add SMS and/or email notifications for registration confirmation, queue progress, result release, and payment follow-up
+- `Dashboard Drilldowns`
+  - allow staff to open KPI cards and charts into filtered lists by patient, service, lane, company, date range, and staff action
+
+### Phase 3: Scale and Administration
+
+These features matter more as the clinic volume, compliance expectations, and operating complexity increase:
+- `Inventory and Supply Monitoring`
+  - track reagents, consumables, tube usage, restock thresholds, and supply-linked lab activity
+- `Backup, Recovery, and Data Retention Tools`
+  - define archive access, retention rules, recovery procedures, protected deletion behavior, and admin restore workflows
+- `Appointment or Schedule Support`
+  - add consultation scheduling, planned arrivals, schedule conflict handling, and a path to mix booked and walk-in visits
+
+## Feature List Reference
+
+When summarizing missing capabilities for the system, these are the 12 major roadmap items to reference:
+- `Specimen Tracking`
+- `Doctor Assignment Rules`
+- `Patient Record Filters and Audit Tools`
+- `Result and Report History`
+- `Partner Company Integration`
+- `Notification System`
+- `Dashboard Drilldowns`
+- `Inventory and Supply Monitoring`
+- `Role-Based Permission Refinement`
+- `Backup, Recovery, and Data Retention Tools`
+- `Appointment or Schedule Support`
+- `Operational Exception Handling`

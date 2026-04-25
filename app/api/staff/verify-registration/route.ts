@@ -4,6 +4,7 @@ import { findMatchingPatient, getDoctorAssignmentSuggestion } from '@/lib/doctor
 
 type ServiceNeeded = 'Pre-Employment' | 'Check-Up' | 'Lab';
 type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG' | '';
+type LabLane = 'blood_test' | 'drug_test' | 'xray' | 'ecg';
 
 interface VerifyRegistrationRequest {
   registrationId?: string | null;
@@ -21,6 +22,7 @@ interface VerifyRegistrationRequest {
     province: string;
     serviceNeeded: ServiceNeeded;
     requestedLabService: RequestedLabService;
+    selectedServiceCodes?: string[];
     assignedDoctorId?: string | null;
     notes: string;
   };
@@ -171,13 +173,133 @@ function toLocalRequestedLane(service: RequestedLabService) {
   }
 }
 
+function laneToLocalRequestedLane(lane: LabLane) {
+  switch (lane) {
+    case 'blood_test':
+      return 'BLOOD TEST';
+    case 'drug_test':
+      return 'DRUG TEST';
+    case 'xray':
+      return 'XRAY';
+    case 'ecg':
+      return 'ECG';
+  }
+}
+
+function laneToRequestedLabService(lane: LabLane): RequestedLabService {
+  switch (lane) {
+    case 'blood_test':
+      return 'Blood Test';
+    case 'drug_test':
+      return 'Drug Test';
+    case 'xray':
+      return 'Xray';
+    case 'ecg':
+      return 'ECG';
+  }
+}
+
+function serviceCodeToLane(serviceCode: string): LabLane | null {
+  const normalized = serviceCode.toLowerCase();
+  if (normalized.includes('drug')) return 'drug_test';
+  if (normalized.includes('xray') || normalized.includes('x-ray')) return 'xray';
+  if (normalized.includes('ecg')) return 'ecg';
+  if (normalized.includes('blood') || normalized.includes('cbc') || normalized.includes('urinalysis')) return 'blood_test';
+  return null;
+}
+
+function requestedLabServiceToServiceCode(service: RequestedLabService) {
+  switch (service) {
+    case 'Blood Test':
+      return 'svc-blood-test';
+    case 'Drug Test':
+      return 'svc-drug-test';
+    case 'Xray':
+      return 'svc-xray';
+    case 'ECG':
+      return 'svc-ecg';
+    default:
+      return 'svc-blood-test';
+  }
+}
+
+function getDefaultServiceCodes(service: ServiceNeeded, requestedLabService: RequestedLabService) {
+  if (service === 'Pre-Employment') {
+    return ['svc-blood-test', 'svc-drug-test', 'svc-xray'];
+  }
+
+  if (service === 'Lab') {
+    return [requestedLabServiceToServiceCode(requestedLabService)];
+  }
+
+  return [];
+}
+
+async function resolveSelectedLabServices(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  formData: VerifyRegistrationRequest['formData']
+) {
+  const selectedCodes = Array.from(
+    new Set(
+      (formData.selectedServiceCodes?.length
+        ? formData.selectedServiceCodes
+        : getDefaultServiceCodes(formData.serviceNeeded, formData.requestedLabService)
+      )
+        .map((code) => String(code).trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (!selectedCodes.length) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('service_catalog')
+    .select('service_code, service_name, service_lane')
+    .in('service_code', selectedCodes);
+
+  if (error) {
+    throw error;
+  }
+
+  const servicesByCode = new Map((data ?? []).map((service) => [String(service.service_code), service]));
+
+  return selectedCodes
+    .map((serviceCode) => {
+      const service = servicesByCode.get(serviceCode);
+      const lane = (service?.service_lane ? String(service.service_lane) : serviceCodeToLane(serviceCode)) as LabLane | null;
+
+      if (!lane) {
+        return null;
+      }
+
+      return {
+        serviceCode,
+        lane,
+        testCode: serviceCode.replace(/^svc-/i, '').toUpperCase(),
+        testName: String(service?.service_name ?? serviceCode.replace(/^svc-/i, '').replaceAll('-', ' ')),
+      };
+    })
+    .filter(
+      (item): item is { serviceCode: string; lane: LabLane; testCode: string; testName: string } =>
+        Boolean(item)
+    );
+}
+
 function buildPendingLanes(
   service: ServiceNeeded,
-  requestedLabService: RequestedLabService
+  requestedLabService: RequestedLabService,
+  selectedLabServices: Array<{ lane: LabLane }> = []
 ): Array<'BLOOD TEST' | 'DRUG TEST' | 'DOCTOR' | 'XRAY' | 'ECG'> {
+  if ((service === 'Pre-Employment' || service === 'Lab') && selectedLabServices.length > 0) {
+    const labLanes = Array.from(new Set(selectedLabServices.map((item) => laneToLocalRequestedLane(item.lane))));
+    return service === 'Pre-Employment' ? [...labLanes, 'DOCTOR'] : labLanes;
+  }
+
   switch (service) {
     case 'Pre-Employment':
-      return ['BLOOD TEST', 'DRUG TEST', 'DOCTOR', 'XRAY', 'ECG'];
+      return ['BLOOD TEST', 'DRUG TEST', 'XRAY', 'DOCTOR'];
     case 'Check-Up':
       return ['DOCTOR'];
     case 'Lab': {
@@ -189,16 +311,24 @@ function buildPendingLanes(
 
 function buildDbQueueSteps(
   service: ServiceNeeded,
-  requestedLabService: RequestedLabService
+  requestedLabService: RequestedLabService,
+  selectedLabServices: Array<{ lane: LabLane }> = []
 ) {
+  if ((service === 'Pre-Employment' || service === 'Lab') && selectedLabServices.length > 0) {
+    const lanes = Array.from(new Set(selectedLabServices.map((item) => item.lane)));
+    const steps = lanes.map((lane, index) => ({ lane, sort_order: index + 1, is_required: true }));
+    return service === 'Pre-Employment'
+      ? [...steps, { lane: 'doctor', sort_order: steps.length + 1, is_required: true }]
+      : steps;
+  }
+
   switch (service) {
     case 'Pre-Employment':
       return [
         { lane: 'blood_test', sort_order: 1, is_required: true },
         { lane: 'drug_test', sort_order: 2, is_required: true },
-        { lane: 'doctor', sort_order: 3, is_required: true },
-        { lane: 'xray', sort_order: 4, is_required: true },
-        { lane: 'ecg', sort_order: 5, is_required: true },
+        { lane: 'xray', sort_order: 3, is_required: true },
+        { lane: 'doctor', sort_order: 4, is_required: true },
       ];
     case 'Check-Up':
       return [{ lane: 'doctor', sort_order: 1, is_required: true }];
@@ -250,6 +380,57 @@ async function getNextQueueNumber(
   }, 0);
 
   return `${prefix}-${String(maxNumber + 1).padStart(3, '0')}`;
+}
+
+async function assertPendingRegistrationIsOpen(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  registrationId?: string | null
+) {
+  if (!registrationId) {
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('self_registrations')
+    .select('id, status, registration_code')
+    .eq('id', registrationId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error('Registration record was not found.');
+  }
+
+  if (data.status !== 'pending') {
+    throw new Error(`Registration ${data.registration_code} was already processed.`);
+  }
+}
+
+async function assertNoActiveVisitToday(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  patientId: string
+) {
+  const { startIso, endIso } = getManilaDayRange();
+  const { data, error } = await supabase
+    .from('visits')
+    .select('id, visit_code')
+    .eq('patient_id', patientId)
+    .eq('status', 'active')
+    .gte('created_at', startIso)
+    .lt('created_at', endIso)
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  const activeVisit = data?.[0];
+  if (activeVisit) {
+    throw new Error(`This patient already has an active visit today. Visit code: ${activeVisit.visit_code}.`);
+  }
 }
 
 async function findOrCreatePatient(
@@ -339,6 +520,8 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClient();
     let assignedDoctorId = formData.assignedDoctorId || null;
 
+    await assertPendingRegistrationIsOpen(supabase, registrationId);
+
     if (formData.serviceNeeded === 'Check-Up' && !assignedDoctorId) {
       const assignment = await getDoctorAssignmentSuggestion(supabase, {
         firstName: formData.firstName,
@@ -352,6 +535,15 @@ export async function POST(request: Request) {
     }
 
     const patient = await findOrCreatePatient(supabase, formData);
+    await assertNoActiveVisitToday(supabase, String(patient.id));
+    const selectedLabServices = await resolveSelectedLabServices(supabase, formData);
+    const requestedServiceCodes = selectedLabServices.map((service) => service.serviceCode);
+    const primaryRequestedLabService =
+      selectedLabServices[0]?.lane
+        ? laneToRequestedLabService(selectedLabServices[0].lane)
+        : formData.requestedLabService;
+    const dbRequestedLabService =
+      formData.serviceNeeded === 'Lab' ? toDbLabService(primaryRequestedLabService) : null;
 
     const { data: visit, error: visitError } = await supabase
       .from('visits')
@@ -360,7 +552,8 @@ export async function POST(request: Request) {
         patient_id: patient.id,
         registration_id: registrationId ?? null,
         service_type: toDbService(formData.serviceNeeded),
-        requested_lab_service: toDbLabService(formData.requestedLabService),
+        requested_lab_service: dbRequestedLabService,
+        requested_service_codes: requestedServiceCodes,
         current_lane: 'general',
         notes: formData.notes || null,
       })
@@ -379,7 +572,8 @@ export async function POST(request: Request) {
         visit_id: visit.id,
         patient_id: patient.id,
         service_type: toDbQueueService(formData.serviceNeeded),
-        requested_lab_service: toDbLabService(formData.requestedLabService),
+        requested_lab_service: dbRequestedLabService,
+        requested_service_codes: requestedServiceCodes,
         current_lane: 'general',
         queue_status: 'waiting',
         counter_name: 'General Intake',
@@ -392,7 +586,7 @@ export async function POST(request: Request) {
       throw queueError;
     }
 
-    const queueSteps = buildDbQueueSteps(formData.serviceNeeded, formData.requestedLabService).map(
+    const queueSteps = buildDbQueueSteps(formData.serviceNeeded, primaryRequestedLabService, selectedLabServices).map(
       (step) => ({
         visit_id: visit.id,
         queue_entry_id: queueEntry.id,
@@ -412,7 +606,7 @@ export async function POST(request: Request) {
       const { error: consultationError } = await supabase.from('consultations').insert({
         visit_id: visit.id,
         queue_entry_id: queueEntry.id,
-        doctor_id: assignedDoctorId,
+        doctor_directory_id: assignedDoctorId,
         status: 'pending',
       });
 
@@ -446,42 +640,21 @@ export async function POST(request: Request) {
         throw labOrderError;
       }
 
-      const labItems =
-        formData.serviceNeeded === 'Pre-Employment'
-          ? [
-              {
-                service_lane: 'blood_test',
-                requested_lab_service: 'blood_test',
-                test_code: 'PRE-BLOOD',
-                test_name: 'Pre-Employment Blood Test',
-              },
-              {
-                service_lane: 'drug_test',
-                requested_lab_service: 'drug_test',
-                test_code: 'PRE-DRUG',
-                test_name: 'Pre-Employment Drug Test',
-              },
-              {
-                service_lane: 'xray',
-                requested_lab_service: 'xray',
-                test_code: 'PRE-XRAY',
-                test_name: 'Pre-Employment Xray',
-              },
-              {
-                service_lane: 'ecg',
-                requested_lab_service: 'ecg',
-                test_code: 'PRE-ECG',
-                test_name: 'Pre-Employment ECG',
-              },
-            ]
-          : [
-              {
-                service_lane: toDbLabService(formData.requestedLabService),
-                requested_lab_service: toDbLabService(formData.requestedLabService),
-                test_code: `LAB-${String(toDbLabService(formData.requestedLabService) ?? 'blood_test').toUpperCase()}`,
-                test_name: `${formData.requestedLabService || 'Blood Test'} Service`,
-              },
-            ];
+      const labItems = selectedLabServices.length > 0
+        ? selectedLabServices.map((service) => ({
+            service_lane: service.lane,
+            requested_lab_service: service.lane,
+            test_code: service.testCode,
+            test_name: service.testName,
+          }))
+        : [
+            {
+              service_lane: toDbLabService(primaryRequestedLabService),
+              requested_lab_service: toDbLabService(primaryRequestedLabService),
+              test_code: `LAB-${String(toDbLabService(primaryRequestedLabService) ?? 'blood_test').toUpperCase()}`,
+              test_name: `${primaryRequestedLabService || 'Blood Test'} Service`,
+            },
+          ];
 
       const { error: labItemsError } = await supabase.from('lab_order_items').insert(
         labItems
@@ -532,7 +705,7 @@ export async function POST(request: Request) {
 
     if (assignedDoctorId) {
       const { data: doctorProfile, error: doctorProfileError } = await supabase
-        .from('staff_profiles')
+        .from('doctors')
         .select('full_name')
         .eq('id', assignedDoctorId)
         .maybeSingle();
@@ -565,9 +738,9 @@ export async function POST(request: Request) {
         queueNumber,
         patientName: fullName,
         serviceType: toLocalQueueService(formData.serviceNeeded),
-        requestedLabLane: toLocalRequestedLane(formData.requestedLabService),
+        requestedLabLane: toLocalRequestedLane(primaryRequestedLabService),
         currentLane: 'GENERAL',
-        pendingLanes: buildPendingLanes(formData.serviceNeeded, formData.requestedLabService),
+        pendingLanes: buildPendingLanes(formData.serviceNeeded, primaryRequestedLabService, selectedLabServices),
         completedLanes: [],
         priority: false,
         counter: 'General Intake',

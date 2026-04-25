@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { PageLayout } from '@/components/layout/page-layout';
 import { getPublicAppUrl } from '@/lib/app-url';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { readStaffProfile } from '@/lib/station-role';
 import { StatusBadge } from '@/components/common/status-badge';
 import {
@@ -301,10 +302,14 @@ function ResultReleasePageContent() {
       setActionNotice('');
 
       const staffProfile = readStaffProfile();
+      const {
+        data: { session },
+      } = await getSupabaseBrowserClient()!.auth.getSession();
       const response = await fetch('/api/staff/result-release', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
         body: JSON.stringify({
           queueId,
@@ -1190,5 +1195,4 @@ export default function ResultReleasePage() {
     </Suspense>
   );
 }
-
 

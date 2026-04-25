@@ -31,6 +31,10 @@ export async function postQueueAction(
     | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'finish_step'; queueId: string }
+    | { action: 'mark_missed'; queueId: string }
+    | { action: 'require_requeue'; queueId: string }
+    | { action: 'requeue'; queueId: string }
+    | { action: 'acknowledge_response'; queueId: string }
     | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> }
 ) {
@@ -56,6 +60,10 @@ export async function postQueueActionWithContext(
     | { action: 'accept_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'finish_step'; queueId: string }
+    | { action: 'mark_missed'; queueId: string }
+    | { action: 'require_requeue'; queueId: string }
+    | { action: 'requeue'; queueId: string }
+    | { action: 'acknowledge_response'; queueId: string }
     | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'add_referral'; queueId: string; lane: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'> }
 ) {

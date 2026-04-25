@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { recordNotificationEvent } from '@/lib/notification-events';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { assertActionPermission, requireStaffContext } from '@/lib/supabase/admin-auth';
 import type { LabReportTemplateData, LabReportSection } from '@/components/common/lab-report-template';
 import { generateLabReportPdf } from '@/lib/report-pdf';
 
@@ -28,8 +31,73 @@ type AuditEvent = {
   tone: 'default' | 'warning' | 'success';
 };
 
+type ReportRevisionRow = {
+  id: string;
+  report_id: string;
+  revision_number: number;
+  status: ReportStatus;
+  action: string;
+  review_notes: string | null;
+  changed_by: string | null;
+  created_at: string;
+};
+
 function createReportId() {
   return crypto.randomUUID();
+}
+
+async function recordReportRevisions(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  reports: Array<{
+    id: string;
+    status: ReportStatus;
+    review_notes?: string | null;
+    pdf_storage_path?: string | null;
+    validated_at?: string | null;
+    released_at?: string | null;
+  }>,
+  action: 'validate' | 'release' | 'flag_review',
+  staffId: string | null
+) {
+  const reportIds = reports.map((report) => report.id);
+  const { data: existingRows, error: existingError } = await supabase
+    .from('report_revisions')
+    .select('report_id, revision_number')
+    .in('report_id', reportIds);
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  const lastRevisionByReportId = new Map<string, number>();
+  for (const row of existingRows ?? []) {
+    const reportId = String(row.report_id ?? '');
+    const revisionNumber = Number(row.revision_number ?? 0);
+    if (!reportId) {
+      continue;
+    }
+
+    lastRevisionByReportId.set(reportId, Math.max(lastRevisionByReportId.get(reportId) ?? 0, revisionNumber));
+  }
+
+  const nextRows = reports.map((report) => ({
+    report_id: report.id,
+    revision_number: (lastRevisionByReportId.get(report.id) ?? 0) + 1,
+    status: report.status,
+    action,
+    review_notes: report.review_notes ?? null,
+    pdf_storage_path: report.pdf_storage_path ?? null,
+    changed_by: staffId,
+    snapshot: {
+      validatedAt: report.validated_at ?? null,
+      releasedAt: report.released_at ?? null,
+    },
+  }));
+
+  const { error } = await supabase.from('report_revisions').insert(nextRows);
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 async function ensureReportsBucket(supabase: ReturnType<typeof getSupabaseAdminClient>) {
@@ -456,6 +524,17 @@ export async function GET(request: Request) {
       throw new Error(reportsError.message);
     }
 
+    const reportIds = ((reports ?? []) as ReportRow[]).map((report) => report.id);
+    const { data: reportRevisions, error: reportRevisionsError } = await supabase
+      .from('report_revisions')
+      .select('id, report_id, revision_number, status, action, review_notes, changed_by, created_at')
+      .in('report_id', reportIds.length > 0 ? reportIds : ['00000000-0000-0000-0000-000000000000'])
+      .order('created_at', { ascending: false });
+
+    if (reportRevisionsError) {
+      throw new Error(reportRevisionsError.message);
+    }
+
     const { data: labOrderItems, error: itemsError } = await supabase
       .from('lab_order_items')
       .select('id, lab_order_id, service_lane, test_name, test_code')
@@ -502,6 +581,7 @@ export async function GET(request: Request) {
             report.validated_by ?? '',
             report.released_by ?? '',
           ]),
+          ...((reportRevisions ?? []) as ReportRevisionRow[]).map((revision) => revision.changed_by ?? ''),
         ].filter(Boolean)
       )
     );
@@ -616,6 +696,20 @@ export async function GET(request: Request) {
 
         return events;
       }),
+      ...((reportRevisions ?? []) as ReportRevisionRow[]).map((revision) => ({
+        id: revision.id,
+        timestamp: revision.created_at,
+        title: `Report revision #${revision.revision_number}`,
+        detail: revision.review_notes?.trim() || `Revision saved after ${revision.action}.`,
+        actor: toActorName(revision.changed_by, staffById),
+        tone: (
+          revision.status === 'released'
+            ? 'success'
+            : revision.action === 'flag_review'
+              ? 'warning'
+              : 'default'
+        ) as AuditEvent['tone'],
+      })),
     ].sort((left, right) => right.timestamp.localeCompare(left.timestamp));
 
     if (isPublicRequest && reportStatus !== 'released') {
@@ -721,6 +815,7 @@ export async function GET(request: Request) {
             .at(-1) ?? null,
         lanes: Array.from(new Set((labOrderItems ?? []).map((item) => mapLaneToUiLane(String(item.service_lane))))),
         auditLog,
+        revisions: (reportRevisions ?? []) as ReportRevisionRow[],
       },
     });
   } catch (error) {
@@ -733,6 +828,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const context = await requireStaffContext(request);
     const body = (await request.json()) as {
       queueId?: string;
       action?: 'validate' | 'release' | 'flag_review';
@@ -744,9 +840,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing release payload.' }, { status: 400 });
     }
 
+    if (body.action === 'validate') {
+      assertActionPermission(context, 'validate_report');
+    } else if (body.action === 'release') {
+      assertActionPermission(context, 'release_report');
+    } else {
+      assertActionPermission(context, 'flag_report_review');
+    }
+
     const supabase = getSupabaseAdminClient();
     const now = new Date().toISOString();
     const requestUrl = new URL(request.url);
+    const actorStaffId = context.userId;
 
     const { data: queueEntry, error: queueError } = await supabase
       .from('queue_entries')
@@ -794,7 +899,7 @@ export async function POST(request: Request) {
         .from('machine_imports')
         .update({
           import_status: 'rejected',
-          reviewed_by: body.staffId ?? null,
+          reviewed_by: actorStaffId,
           reviewed_at: now,
         })
         .eq('visit_id', queueEntry.visit_id);
@@ -811,12 +916,48 @@ export async function POST(request: Request) {
           review_flagged_at: now,
           released_by: null,
           released_at: null,
+          validated_by: actorStaffId,
         })
         .in('lab_order_id', labOrderIds);
 
       if (resetReportsError) {
         throw new Error(resetReportsError.message);
       }
+
+      const { data: flaggedReports, error: flaggedReportsError } = await supabase
+        .from('reports')
+        .select('id, status, review_notes, pdf_storage_path, validated_at, released_at')
+        .in('lab_order_id', labOrderIds);
+
+      if (flaggedReportsError) {
+        throw new Error(flaggedReportsError.message);
+      }
+
+      await recordReportRevisions(
+        supabase,
+        (flaggedReports ?? []) as Array<{
+          id: string;
+          status: ReportStatus;
+          review_notes?: string | null;
+          pdf_storage_path?: string | null;
+          validated_at?: string | null;
+          released_at?: string | null;
+        }>,
+        'flag_review',
+        actorStaffId
+      );
+
+      await recordAuditEvent({
+        eventType: 'report_flagged_for_review',
+        entityType: 'visit',
+        entityId: String(queueEntry.visit_id),
+        visitId: String(queueEntry.visit_id),
+        patientId: String(queueEntry.patient_id),
+        queueEntryId: String(queueEntry.id),
+        actorStaffId,
+        summary: 'Report flagged for review.',
+        detail: body.reviewNotes?.trim() || null,
+      });
 
       return NextResponse.json({
         success: true,
@@ -860,13 +1001,13 @@ export async function POST(request: Request) {
         visit_id: queueEntry.visit_id,
         patient_id: queueEntry.patient_id,
         status: nextStatus,
-        validated_by: body.staffId ?? null,
+        validated_by: actorStaffId,
         review_notes: null,
         review_flagged_at: null,
         validated_at: existingReport?.validated_at ?? now,
         released_by:
           nextStatus === 'released'
-            ? body.staffId ?? null
+            ? actorStaffId
             : null,
         released_at: nextStatus === 'released' ? existingReport?.released_at ?? now : null,
       };
@@ -884,7 +1025,7 @@ export async function POST(request: Request) {
       .from('machine_imports')
       .update({
         import_status: 'accepted',
-        reviewed_by: body.staffId ?? null,
+        reviewed_by: actorStaffId,
         reviewed_at: now,
       })
       .eq('visit_id', queueEntry.visit_id);
@@ -898,9 +1039,9 @@ export async function POST(request: Request) {
         .from('lab_orders')
         .update({
           status: 'released',
-          released_by: body.staffId ?? null,
+          released_by: actorStaffId,
           released_at: now,
-          validated_by: body.staffId ?? null,
+          validated_by: actorStaffId,
           validated_at: now,
         })
         .in('id', labOrderIds);
@@ -960,13 +1101,67 @@ export async function POST(request: Request) {
       const { error: validateOrdersError } = await supabase
         .from('lab_orders')
         .update({
-          validated_by: body.staffId ?? null,
+          validated_by: actorStaffId,
           validated_at: now,
         })
         .in('id', labOrderIds);
 
       if (validateOrdersError) {
         throw new Error(validateOrdersError.message);
+      }
+    }
+
+    const revisionReports = nextReports.map((report) => ({
+      id: report.id,
+      status: report.status,
+      review_notes: report.review_notes,
+      pdf_storage_path: null,
+      validated_at: report.validated_at,
+      released_at: report.released_at,
+    }));
+    await recordReportRevisions(supabase, revisionReports, body.action, actorStaffId);
+
+    await recordAuditEvent({
+      eventType: body.action === 'release' ? 'report_released' : 'report_validated',
+      entityType: 'visit',
+      entityId: String(queueEntry.visit_id),
+      visitId: String(queueEntry.visit_id),
+      patientId: String(queueEntry.patient_id),
+      queueEntryId: String(queueEntry.id),
+      actorStaffId,
+      summary: body.action === 'release' ? 'Released patient report.' : 'Validated patient report.',
+    });
+
+    if (body.action === 'release') {
+      const { data: patient, error: patientError } = await supabase
+        .from('patients')
+        .select('email_address')
+        .eq('id', queueEntry.patient_id)
+        .maybeSingle();
+
+      if (patientError) {
+        throw new Error(patientError.message);
+      }
+
+      if (patient?.email_address) {
+        const { data: firstReport } = await supabase
+          .from('reports')
+          .select('id')
+          .in('lab_order_id', labOrderIds)
+          .limit(1)
+          .maybeSingle();
+
+        await recordNotificationEvent({
+          eventType: 'report_release',
+          channel: 'email',
+          recipient: String(patient.email_address),
+          patientId: String(queueEntry.patient_id),
+          visitId: String(queueEntry.visit_id),
+          reportId: String(firstReport?.id ?? ''),
+          subject: 'Your Globalife report is ready',
+          payload: { queueId: body.queueId },
+          status: 'pending',
+        });
       }
     }
 
