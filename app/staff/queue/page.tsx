@@ -48,12 +48,18 @@ function SummaryCard({
   emphasized?: boolean;
 }) {
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-        {icon}
+    <Card className="min-w-0">
+      <div className="flex min-h-[6rem] flex-col justify-between gap-3 px-5 py-1">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-semibold leading-tight text-muted-foreground">{label}</p>
+          <span className="shrink-0 text-muted-foreground">{icon}</span>
+        </div>
+        <p
+          className={`text-center text-4xl font-black leading-none ${emphasized ? 'text-primary' : ''}`}
+        >
+          {value}
+        </p>
       </div>
-      <p className={`mt-3 text-4xl font-black ${emphasized ? 'text-primary' : ''}`}>{value}</p>
     </Card>
   );
 }
@@ -158,8 +164,8 @@ export default function QueueManagementPage() {
   const getLaneWaiting = (lane: QueueLane) =>
     queue.filter(
       (item) =>
-        item.currentLane === lane &&
-        item.status === 'waiting'
+        item.status === 'waiting' &&
+        item.pendingLanes.includes(lane)
     );
 
   const getLaneServing = (lane: QueueLane) =>
@@ -227,9 +233,9 @@ export default function QueueManagementPage() {
             </Button>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-3">
             <SummaryCard
-              label="Now Serving"
+              label="In Progress"
               value={serving.length}
               icon={<Activity className="h-4 w-4 text-primary" />}
               emphasized
@@ -255,7 +261,7 @@ export default function QueueManagementPage() {
                   </p>
                   <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Use one action only. `Call Next` automatically completes the current patient in this station and moves the next patient into now serving.
+                    Use one action only. `Call Next` automatically completes the current patient in this station and moves the next patient into in progress.
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-1">
@@ -270,7 +276,7 @@ export default function QueueManagementPage() {
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
-                            Now Serving
+                            In Progress
                           </p>
               <p className="mt-3 text-5xl font-black tracking-tight text-primary">
                             {item.queueNumber}
@@ -356,7 +362,7 @@ export default function QueueManagementPage() {
                   </p>
                   <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    The waiting list stays scrollable as the queue grows.
+                    This list shows every patient who still has {lane} pending.
                   </p>
                 </div>
                 <div className="rounded-full bg-muted px-3 py-1 text-sm font-semibold">
@@ -429,14 +435,14 @@ export default function QueueManagementPage() {
         </div>
 
         <div className="space-y-8">
-            <div className="grid gap-4 lg:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SummaryCard
                 label="Total Waiting"
                 value={waitingCount}
                 icon={<Clock3 className="h-4 w-4 text-muted-foreground" />}
               />
               <SummaryCard
-                label="Now Serving"
+                label="In Progress"
                 value={servingCount}
                 icon={<Activity className="h-4 w-4 text-primary" />}
                 emphasized
@@ -535,26 +541,20 @@ export default function QueueManagementPage() {
                   <Card key={lane} className="p-6">
                     <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                       <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
-                          {lane} Station
-                        </p>
                         <h2 className="mt-2 text-3xl font-bold">{lane}</h2>
-                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                          One-button flow for the station. `Call Next` completes the current patient in this lane and brings the next eligible patient into now serving.
-                        </p>
                       </div>
                       <div className="grid min-w-40 grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Serving
+                        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-center">
+                          <p className="text-sm font-semibold leading-tight text-muted-foreground">
+                            In Progress
                           </p>
-                          <p className="mt-2 text-3xl font-bold text-primary">{serving.length}</p>
+                          <p className="mt-1 text-3xl font-bold leading-none text-primary">{serving.length}</p>
                         </div>
-                        <div className="rounded-xl border border-border bg-muted/30 p-4 text-center">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-center">
+                          <p className="text-sm font-semibold leading-tight text-muted-foreground">
                             Waiting
                           </p>
-                          <p className="mt-2 text-3xl font-bold">{waiting.length}</p>
+                          <p className="mt-1 text-3xl font-bold leading-none">{waiting.length}</p>
                         </div>
                       </div>
                     </div>
@@ -566,7 +566,7 @@ export default function QueueManagementPage() {
                     <div className="space-y-4">
                       <div>
                         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Now Serving
+                          In Progress
                         </p>
                         <div className="space-y-3">
                           {serving.length > 0 ? (
@@ -646,39 +646,6 @@ export default function QueueManagementPage() {
                             </div>
                           )}
                         </div>
-                      </div>
-
-                      <div>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Waiting in {lane}
-                        </p>
-                        <ScrollArea className="h-[18rem] pr-3">
-                          <div className="space-y-3">
-                            {waiting.length > 0 ? (
-                              waiting.map((item) => (
-                                <div key={item.id} className="rounded-xl bg-muted/50 p-4">
-                                  <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
-                                  {lane === 'DOCTOR' && item.assignedDoctorName && (
-                                    <p className="mt-1 text-xs font-medium text-primary">
-                                      Assigned Doctor: {item.assignedDoctorName}
-                                    </p>
-                                  )}
-                                  <QueueMeta item={item} />
-                                  <Link
-                                    href={getEntryActionPath(item, lane)}
-                                    className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
-                                  >
-                                    {getEntryActionLabel(lane)}
-                                  </Link>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                                No waiting patients in {lane}.
-                              </div>
-                            )}
-                          </div>
-                        </ScrollArea>
                       </div>
                     </div>
                   </Card>

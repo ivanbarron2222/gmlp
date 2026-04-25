@@ -43,7 +43,7 @@ type VisitCheckPayload = {
 function getStatusLabel(status: string) {
   switch (status) {
     case 'now_serving':
-      return 'Now Serving';
+      return 'In Progress';
     case 'requeue_required':
       return 'Re-Queue Required';
     case 'missed':
@@ -413,8 +413,12 @@ export default function VisitCheckPage() {
               </h2>
 
               {result.queue ? (
-                <div className="mt-5 grid gap-5 lg:grid-cols-[360px_1fr]">
-                  <div className="rounded-[22px] border border-[#bfd0e3] bg-white px-6 py-5 text-center shadow-sm">
+                <div className="mt-5">
+                  <div className="mb-3 flex justify-end">
+                    <p className="text-xs text-muted-foreground">Call: {result.queue.pingCount}/3</p>
+                  </div>
+
+                  <div className="mx-auto w-full max-w-[360px] rounded-[22px] border border-[#bfd0e3] bg-white px-6 py-5 text-center shadow-sm">
                     <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#0b65b1]">
                       Globalife Medical Laboratory &amp; Polyclinic
                     </p>
@@ -434,10 +438,6 @@ export default function VisitCheckPage() {
                       {result.registration?.service ?? result.queue.lane}
                     </p>
                     <p className="mt-1 text-[15px] text-slate-700">
-                      Pending:{' '}
-                      {result.queue.pendingStations.length > 0 ? result.queue.pendingStations.join(', ') : 'N/A'}
-                    </p>
-                    <p className="mt-1 text-[15px] text-slate-700">
                       {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleString() : ''}
                     </p>
                     <div className="mt-5 flex justify-center">
@@ -450,59 +450,6 @@ export default function VisitCheckPage() {
                     <p className="mt-5 text-xs text-slate-700">
                       Scan QR to open the patient&apos;s active visit/profile.
                     </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border bg-white p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Station
-                        </p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">
-                          {result.queue.counter || result.queue.lane}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border bg-white p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Current Lane
-                        </p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">{result.queue.lane}</p>
-                      </div>
-                      <div className="rounded-xl border bg-white p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Response
-                        </p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">
-                          {result.queue.responseAt ? 'Received' : 'Not yet'}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border bg-white p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Ping Count
-                        </p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">{result.queue.pingCount}/3</p>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border bg-white p-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        Queue Route
-                      </p>
-                      <div className="mt-3 space-y-3 text-sm">
-                        <div>
-                          <p className="font-medium text-slate-900">Pending Stations</p>
-                          <p className="mt-1 leading-6 text-slate-700">
-                            {result.queue.pendingStations.length > 0 ? result.queue.pendingStations.join(', ') : 'None'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="font-medium text-slate-900">Completed Stations</p>
-                          <p className="mt-1 leading-6 text-slate-700">
-                            {result.queue.completedStations.length > 0 ? result.queue.completedStations.join(', ') : 'None'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </div>
               ) : result.registration ? (

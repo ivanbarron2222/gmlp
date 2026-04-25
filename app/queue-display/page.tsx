@@ -200,7 +200,7 @@ export default function QueueDisplayPage() {
           <section className="min-h-0 rounded-[1.1rem] border border-sky-200/80 bg-white/95 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.10)]">
             <div className="mb-4 flex items-start justify-between">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-sky-700">Now Serving</p>
+                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-sky-700">In Progress</p>
                 <p className="mt-2 text-sm text-slate-500">Please proceed when your queue number is shown.</p>
               </div>
               <span className="mt-1 inline-flex h-3.5 w-3.5 rounded-full bg-red-500 animate-pulse" />
