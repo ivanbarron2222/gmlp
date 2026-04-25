@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertCircle, CheckCircle2, Printer, QrCode } from 'lucide-react';
+import { AlertCircle, CheckCircle2, QrCode } from 'lucide-react';
 import {
   addPendingRegistration,
   PendingRegistration,
@@ -323,6 +323,10 @@ export default function PatientRegistrationPage() {
     const submittedAt = submittedRegistration?.submittedAt
       ? new Date(submittedRegistration.submittedAt).toLocaleString()
       : new Date().toLocaleString();
+    const slipNumber = queueEntry?.queueNumber ?? submittedRegistration?.registrationCode ?? 'Pending';
+    const slipService = queueEntry?.serviceType ?? formData.serviceNeeded;
+    const slipPending = queueEntry?.pendingLanes?.join(', ') || 'N/A';
+    const slipLabNumbers = submittedRegistration?.labNumbers?.join(', ') || 'N/A';
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-background to-secondary flex items-center justify-center p-4 py-12">
@@ -339,59 +343,48 @@ export default function PatientRegistrationPage() {
               Your queue slip has been generated. Please wait for your queue number to be called.
             </p>
 
-            <div className="bg-accent/10 border border-accent/30 rounded-xl p-5 text-left text-sm mb-6 print:border-foreground print:bg-white">
-              <div className="mb-4 rounded-lg border border-accent/30 bg-background p-4 text-center print:border-foreground">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Registration Slip
+            <div className="mb-6 flex justify-center">
+              <div className="w-full max-w-sm rounded-[18px] border border-slate-300 bg-white p-6 text-center shadow-sm print:shadow-none">
+                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-[#0b65b1]">
+                  Globalife Medical Laboratory &amp; Polyclinic
                 </p>
-                <p className="mt-2 text-3xl font-black tracking-tight text-primary print:text-foreground">
-                  {queueEntry?.queueNumber ?? submittedRegistration?.registrationCode ?? 'Pending'}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">{submittedAt}</p>
-              </div>
-              <div className="grid gap-5 sm:grid-cols-[1fr_auto]">
-                <div>
-                  <p className="font-semibold text-accent mb-3 print:text-foreground">Queue Details</p>
-                  <div className="grid gap-2 text-xs text-muted-foreground">
-                    <p>Name: <span className="font-medium text-foreground">{fullName}</span></p>
-                    <p>Company: <span className="font-medium text-foreground">{formData.company || 'N/A'}</span></p>
-                    <p>Service: <span className="font-medium text-foreground">{queueEntry?.serviceType ?? formData.serviceNeeded}</span></p>
-                    <p>Station: <span className="font-medium text-foreground">{queueEntry?.counter ?? 'General Intake'}</span></p>
-                    <p>Pending: <span className="font-medium text-foreground">{queueEntry?.pendingLanes?.join(', ') || 'N/A'}</span></p>
-                    <p>Lab No: <span className="font-medium text-foreground">{submittedRegistration?.labNumbers?.join(', ') || 'N/A'}</span></p>
-                    {selectedLabServices.length > 0 && (
-                      <p>
-                        Selected Tests:{' '}
-                        <span className="font-medium text-foreground">
-                          {selectedLabServices.map((service) => service.name).join(', ')}
-                        </span>
-                      </p>
-                    )}
-                  </div>
+                <p className="mt-2 text-2xl font-bold text-slate-900">Queue Slip</p>
+                <p className="mt-3 text-[52px] font-black leading-none text-[#0b65b1]">{slipNumber}</p>
+
+                <div className="mt-4 space-y-1 text-sm leading-6 text-slate-600">
+                  <p className="font-semibold text-slate-900">{fullName}</p>
+                  <p>{slipLabNumbers !== 'N/A' ? `Lab No: ${slipLabNumbers}` : 'Lab No: N/A'}</p>
+                  <p>{slipService}</p>
+                  <p>Pending: {slipPending}</p>
+                  <p>{submittedAt}</p>
+                  {formData.company ? <p>Company: {formData.company}</p> : null}
+                  <p>Station: {queueEntry?.counter ?? 'General Intake'}</p>
+                  {selectedLabServices.length > 0 ? (
+                    <p>{selectedLabServices.map((service) => service.name).join(', ')}</p>
+                  ) : null}
                 </div>
+
                 {queueQrDataUrl ? (
-                  <div className="rounded-lg border bg-white p-3 text-center">
-                    <img src={queueQrDataUrl} alt="Queue QR code" className="h-32 w-32" />
-                    <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Scan for Visit
-                    </p>
+                  <div className="mt-4 flex justify-center">
+                    <div className="rounded-lg border border-slate-200 bg-white p-2">
+                      <img src={queueQrDataUrl} alt="Queue QR code" className="h-32 w-32" />
+                    </div>
                   </div>
                 ) : (
-                  <div className="flex h-36 w-36 items-center justify-center rounded-lg border bg-white text-muted-foreground">
-                    <QrCode className="h-10 w-10" />
+                  <div className="mt-4 flex justify-center">
+                    <div className="flex h-36 w-36 items-center justify-center rounded-lg border border-slate-200 bg-white text-muted-foreground">
+                      <QrCode className="h-10 w-10" />
+                    </div>
                   </div>
                 )}
+
+                <p className="mt-4 text-xs text-slate-500">
+                  Scan QR to open the patient&apos;s active visit/profile.
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground mt-4">
-                Staff may scan this QR code to open the patient visit/profile.
-              </p>
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row">
-              <Button type="button" className="h-11 flex-1" onClick={() => window.print()}>
-                <Printer className="h-4 w-4" />
-                Print Slip
-              </Button>
               <Button type="button" variant="outline" className="h-11 flex-1" onClick={() => window.location.assign('/')}>
                 Back to Portal
               </Button>

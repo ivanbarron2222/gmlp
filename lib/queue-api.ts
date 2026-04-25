@@ -32,7 +32,6 @@ export async function postQueueAction(
     | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'finish_step'; queueId: string }
     | { action: 'mark_missed'; queueId: string }
-    | { action: 'require_requeue'; queueId: string }
     | { action: 'requeue'; queueId: string }
     | { action: 'acknowledge_response'; queueId: string }
     | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
@@ -61,7 +60,6 @@ export async function postQueueActionWithContext(
     | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
     | { action: 'finish_step'; queueId: string }
     | { action: 'mark_missed'; queueId: string }
-    | { action: 'require_requeue'; queueId: string }
     | { action: 'requeue'; queueId: string }
     | { action: 'acknowledge_response'; queueId: string }
     | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }

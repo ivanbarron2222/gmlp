@@ -192,7 +192,7 @@ export default function QueueManagementPage() {
   };
 
   const handleQueueStatusAction = async (
-    action: 'mark_missed' | 'require_requeue' | 'requeue' | 'acknowledge_response',
+    action: 'mark_missed' | 'requeue' | 'acknowledge_response',
     queueId: string
   ) => {
     const nextQueue = await postQueueAction({ action, queueId });
@@ -303,13 +303,6 @@ export default function QueueManagementPage() {
                             onClick={() => void handleQueueStatusAction('mark_missed', item.id)}
                           >
                             Mark Missed
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
-                          >
-                            Require Re-Queue
                           </Button>
                           {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
                             <>
@@ -611,13 +604,6 @@ export default function QueueManagementPage() {
                                     >
                                       Mark Missed
                                     </Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
-                                    >
-                                      Require Re-Queue
-                                    </Button>
                                     {lane === 'DOCTOR' && item.serviceType === 'CHECK-UP' && (
                                       <>
                                         <Button
@@ -746,23 +732,17 @@ export default function QueueManagementPage() {
                         <div key={item.id} className="rounded-xl border border-red-200 bg-red-50 p-4">
                           <p className="font-semibold">{item.queueNumber} | {item.patientName}</p>
                           <QueueMeta item={item} />
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => void handleQueueStatusAction('requeue', item.id)}
-                            >
-                              Re-Queue
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void handleQueueStatusAction('require_requeue', item.id)}
-                            >
-                              Require Re-Queue
-                            </Button>
-                          </div>
+                          <p className="mt-3 text-sm text-muted-foreground">
+                            Patient must re-queue from the check visit page or be re-queued by staff.
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="mt-3"
+                            onClick={() => void handleQueueStatusAction('requeue', item.id)}
+                          >
+                            Re-Queue
+                          </Button>
                         </div>
                       ))
                     ) : (

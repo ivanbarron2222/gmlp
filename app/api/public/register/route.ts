@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { randomBytes } from 'node:crypto';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { findMatchingPatient } from '@/lib/doctor-assignment';
 import type { RegistrationFormInput, RegistrationService, RequestedLabService } from '@/lib/registration-store';
@@ -6,7 +7,15 @@ import type { RegistrationFormInput, RegistrationService, RequestedLabService } 
 type LabLane = 'blood_test' | 'drug_test' | 'xray' | 'ecg';
 
 function buildRegistrationCode() {
-  return `REG-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(6);
+  let code = '';
+
+  for (const byte of bytes) {
+    code += alphabet[byte % alphabet.length];
+  }
+
+  return `REG-${code}`;
 }
 
 function createCode(prefix: string) {

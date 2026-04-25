@@ -46,6 +46,19 @@ function formatLane(lane: unknown) {
   return String(lane ?? '').replaceAll('_', ' ').toUpperCase();
 }
 
+function getQueuePrefix(serviceType: unknown) {
+  switch (String(serviceType ?? '')) {
+    case 'pre_employment':
+      return 'P';
+    case 'check_up':
+      return 'C';
+    case 'lab':
+      return 'L';
+    default:
+      return 'P';
+  }
+}
+
 function getReportAvailability(reports: Array<{ status?: string | null; pdf_storage_path?: string | null; released_at?: string | null }>) {
   if (reports.some((report) => report.status === 'released')) {
     return 'released';
@@ -103,12 +116,166 @@ async function refetchQueueById(
   return data as QueueCheckRow | null;
 }
 
+async function getNextQueueNumber(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  serviceType: unknown
+) {
+  const { startIso, endIso } = getManilaDayRange();
+  const prefix = getQueuePrefix(serviceType);
+  const { data, error } = await supabase
+    .from('queue_entries')
+    .select('queue_number')
+    .gte('created_at', startIso)
+    .lt('created_at', endIso)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    throw error;
+  }
+
+  const maxNumber = (data ?? []).reduce((highest, row) => {
+    const [currentPrefix, numeric] = String((row as { queue_number?: string | null }).queue_number ?? '').split('-');
+
+    if (currentPrefix !== prefix) {
+      return highest;
+    }
+
+    const value = Number.parseInt(numeric ?? '0', 10);
+    return Number.isNaN(value) ? highest : Math.max(highest, value);
+  }, 0);
+
+  return `${prefix}-${String(maxNumber + 1).padStart(3, '0')}`;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const input = requireVerification(body);
     const supabase = getSupabaseAdminClient();
+    const action = normalize(body.action);
     const { today, startIso, endIso } = getManilaDayRange();
+
+    if (action === 'acknowledge' || action === 'requeue') {
+      const queueId = normalize(body.queueId);
+
+      if (!queueId) {
+        return NextResponse.json({ error: 'Missing queue reference.' }, { status: 400 });
+      }
+
+      const { data: patients, error: patientError } = await supabase
+        .from('patients')
+        .select('id')
+        .ilike('first_name', input.firstName)
+        .ilike('last_name', input.lastName)
+        .eq('birth_date', input.birthDate)
+        .ilike('email_address', input.emailAddress)
+        .limit(5);
+
+      if (patientError) {
+        throw patientError;
+      }
+
+      let actionRegistrationQuery = supabase
+        .from('self_registrations')
+        .select('patient_id')
+        .ilike('first_name', input.firstName)
+        .ilike('last_name', input.lastName)
+        .eq('birth_date', input.birthDate)
+        .ilike('email_address', input.emailAddress)
+        .gte('created_at', startIso)
+        .lt('created_at', endIso)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (input.registrationReference) {
+        actionRegistrationQuery = actionRegistrationQuery.or(`registration_code.ilike.${input.registrationReference}`);
+      }
+
+      const { data: registrations, error: registrationError } = await actionRegistrationQuery;
+
+      if (registrationError) {
+        throw registrationError;
+      }
+
+      const patientIds = Array.from(
+        new Set([
+          ...(patients ?? []).map((patient) => String(patient.id)),
+          ...(registrations ?? []).map((registration) => String(registration.patient_id ?? '')).filter(Boolean),
+        ])
+      );
+
+      if (!patientIds.length) {
+        return NextResponse.json({ error: 'Visit not found.' }, { status: 404 });
+      }
+
+      if (action === 'requeue') {
+        const { data: queue, error: queueError } = await supabase
+          .from('queue_entries')
+          .select('id, patient_id, visit_id, service_type, priority_lane, queue_status')
+          .eq('id', queueId)
+          .in('patient_id', patientIds)
+          .maybeSingle();
+
+        if (queueError) {
+          throw queueError;
+        }
+
+        if (!queue) {
+          return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
+        }
+
+        if (!['missed', 'requeue_required'].includes(String(queue.queue_status))) {
+          return NextResponse.json({ error: 'This queue is not eligible for re-queue.' }, { status: 400 });
+        }
+
+        const nextQueueNumber = await getNextQueueNumber(supabase, queue.service_type);
+
+        const { error: requeueError } = await supabase
+          .from('queue_entries')
+          .update({
+            queue_number: nextQueueNumber,
+            queue_date: today,
+            current_lane: 'general',
+            counter_name: queue.priority_lane ? 'Priority Lane' : 'General Intake',
+            queue_status: 'waiting',
+            now_serving_at: null,
+            missed_at: null,
+            requeue_required_at: null,
+            notification_ping_count: 0,
+            last_ping_at: null,
+            response_at: null,
+          })
+          .eq('id', queueId)
+          .in('patient_id', patientIds);
+
+        if (requeueError) {
+          throw requeueError;
+        }
+
+        const { error: visitError } = await supabase
+          .from('visits')
+          .update({ current_lane: 'general' })
+          .eq('id', String(queue.visit_id));
+
+        if (visitError) {
+          throw visitError;
+        }
+      } else {
+        const { error } = await supabase
+          .from('queue_entries')
+          .update({ response_at: new Date().toISOString() })
+          .eq('id', queueId)
+          .in('patient_id', patientIds)
+          .eq('queue_status', 'now_serving');
+
+        if (error) {
+          throw error;
+        }
+      }
+
+      return NextResponse.json({ success: true });
+    }
 
     let registrationQuery = supabase
       .from('self_registrations')
@@ -341,12 +508,14 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const input = requireVerification(body);
     const queueId = normalize(body.queueId);
+    const action = normalize(body.action);
 
     if (!queueId) {
       return NextResponse.json({ error: 'Missing queue reference.' }, { status: 400 });
     }
 
     const supabase = getSupabaseAdminClient();
+    const { startIso, endIso } = getManilaDayRange();
     const { data: patients, error: patientError } = await supabase
       .from('patients')
       .select('id')
@@ -360,26 +529,109 @@ export async function PATCH(request: Request) {
       throw patientError;
     }
 
-    const patientIds = (patients ?? []).map((patient) => String(patient.id));
+    let registrationQuery = supabase
+      .from('self_registrations')
+      .select('patient_id')
+      .ilike('first_name', input.firstName)
+      .ilike('last_name', input.lastName)
+      .eq('birth_date', input.birthDate)
+      .ilike('email_address', input.emailAddress)
+      .gte('created_at', startIso)
+      .lt('created_at', endIso)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (input.registrationReference) {
+      registrationQuery = registrationQuery.or(`registration_code.ilike.${input.registrationReference}`);
+    }
+
+    const { data: registrations, error: registrationError } = await registrationQuery;
+
+    if (registrationError) {
+      throw registrationError;
+    }
+
+    const patientIds = Array.from(
+      new Set([
+        ...(patients ?? []).map((patient) => String(patient.id)),
+        ...(registrations ?? []).map((registration) => String(registration.patient_id ?? '')).filter(Boolean),
+      ])
+    );
+
     if (!patientIds.length) {
       return NextResponse.json({ error: 'Visit not found.' }, { status: 404 });
     }
 
-    const { error } = await supabase
-      .from('queue_entries')
-      .update({ response_at: new Date().toISOString() })
-      .eq('id', queueId)
-      .in('patient_id', patientIds)
-      .eq('queue_status', 'now_serving');
+    if (action === 'requeue') {
+      const { data: queue, error: queueError } = await supabase
+        .from('queue_entries')
+        .select('id, patient_id, visit_id, service_type, priority_lane, queue_status')
+        .eq('id', queueId)
+        .in('patient_id', patientIds)
+        .maybeSingle();
 
-    if (error) {
-      throw error;
+      if (queueError) {
+        throw queueError;
+      }
+
+      if (!queue) {
+        return NextResponse.json({ error: 'Queue entry not found.' }, { status: 404 });
+      }
+
+      if (!['missed', 'requeue_required'].includes(String(queue.queue_status))) {
+        return NextResponse.json({ error: 'This queue is not eligible for re-queue.' }, { status: 400 });
+      }
+
+      const { today } = getManilaDayRange();
+      const nextQueueNumber = await getNextQueueNumber(supabase, queue.service_type);
+
+      const { error: requeueError } = await supabase
+        .from('queue_entries')
+        .update({
+          queue_number: nextQueueNumber,
+          queue_date: today,
+          current_lane: 'general',
+          counter_name: queue.priority_lane ? 'Priority Lane' : 'General Intake',
+          queue_status: 'waiting',
+          now_serving_at: null,
+          missed_at: null,
+          requeue_required_at: null,
+          notification_ping_count: 0,
+          last_ping_at: null,
+          response_at: null,
+        })
+        .eq('id', queueId)
+        .in('patient_id', patientIds);
+
+      if (requeueError) {
+        throw requeueError;
+      }
+
+      const { error: visitError } = await supabase
+        .from('visits')
+        .update({ current_lane: 'general' })
+        .eq('id', String(queue.visit_id));
+
+      if (visitError) {
+        throw visitError;
+      }
+    } else {
+      const { error } = await supabase
+        .from('queue_entries')
+        .update({ response_at: new Date().toISOString() })
+        .eq('id', queueId)
+        .in('patient_id', patientIds)
+        .eq('queue_status', 'now_serving');
+
+      if (error) {
+        throw error;
+      }
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unable to acknowledge queue call.' },
+      { error: error instanceof Error ? error.message : 'Unable to update queue.' },
       { status: 400 }
     );
   }

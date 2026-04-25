@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import { CalendarDays, CheckCircle2, Download, SearchCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -84,12 +85,14 @@ export default function VisitCheckPage() {
   const [result, setResult] = useState<VisitCheckPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
+  const [isRequeueing, setIsRequeueing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadPassword, setDownloadPassword] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [error, setError] = useState('');
   const [isLive, setIsLive] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [queueQrDataUrl, setQueueQrDataUrl] = useState('');
   const latestFormDataRef = useRef(formData);
 
   useEffect(() => {
@@ -148,6 +151,19 @@ export default function VisitCheckPage() {
     return () => window.clearInterval(intervalId);
   }, [isLive]);
 
+  useEffect(() => {
+    const queueId = result?.queue?.id;
+    if (!queueId || typeof window === 'undefined') {
+      setQueueQrDataUrl('');
+      return;
+    }
+
+    const scanUrl = new URL(`/scan/queue/${queueId}`, window.location.origin).toString();
+    QRCode.toDataURL(scanUrl, { margin: 1, width: 200 })
+      .then((dataUrl) => setQueueQrDataUrl(dataUrl))
+      .catch(() => setQueueQrDataUrl(''));
+  }, [result?.queue?.id]);
+
   const acknowledgeCall = async () => {
     if (!result?.queue?.id) {
       return;
@@ -158,9 +174,9 @@ export default function VisitCheckPage() {
 
     try {
       const response = await fetch('/api/public/visit-check', {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, queueId: result.queue.id }),
+        body: JSON.stringify({ ...formData, queueId: result.queue.id, action: 'acknowledge' }),
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
 
@@ -173,6 +189,34 @@ export default function VisitCheckPage() {
       setError(nextError instanceof Error ? nextError.message : 'Unable to acknowledge queue call.');
     } finally {
       setIsAcknowledging(false);
+    }
+  };
+
+  const requeueVisit = async () => {
+    if (!result?.queue?.id) {
+      return;
+    }
+
+    setIsRequeueing(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/public/visit-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, queueId: result.queue.id, action: 'requeue' }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Unable to re-queue visit.');
+      }
+
+      await fetchVisit({ resetPassword: true });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Unable to re-queue visit.');
+    } finally {
+      setIsRequeueing(false);
     }
   };
 
@@ -240,20 +284,20 @@ export default function VisitCheckPage() {
             </p>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">Check Visit / Results</h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              Enter the same patient details used during registration to check today&apos;s clinic
-              visit and queue call status.
+              Use the registration ID together with the same patient details used during registration
+              to check today&apos;s clinic visit and queue call status.
             </p>
           </div>
 
           <form className="grid gap-5" onSubmit={checkVisit}>
             <div>
               <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
-                Registration ID / Queue Number
+                Registration ID
               </label>
               <Input
                 className="h-12"
                 name="registrationReference"
-                placeholder="REG-... or P-001"
+                placeholder="REG-..."
                 value={formData.registrationReference}
                 onChange={(event) =>
                   setFormData((current) => ({
@@ -262,6 +306,9 @@ export default function VisitCheckPage() {
                   }))
                 }
               />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Use the registration ID from the patient registration slip. Queue numbers can change after re-queue.
+              </p>
             </div>
 
             <div className="grid gap-5 md:grid-cols-2">
@@ -366,34 +413,97 @@ export default function VisitCheckPage() {
               </h2>
 
               {result.queue ? (
-                <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                  <p>
-                    Queue Number:{' '}
-                    <span
-                      className={cn(
-                        'font-semibold',
-                        result.queue.status === 'now_serving' && !result.queue.responseAt && 'text-emerald-800'
-                      )}
-                    >
+                <div className="mt-5 grid gap-5 lg:grid-cols-[360px_1fr]">
+                  <div className="rounded-[22px] border border-[#bfd0e3] bg-white px-6 py-5 text-center shadow-sm">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#0b65b1]">
+                      Globalife Medical Laboratory &amp; Polyclinic
+                    </p>
+                    <p className="mt-3 text-[22px] font-bold text-slate-900">Queue Slip</p>
+                    <p className="mt-3 text-[64px] font-black leading-none text-[#0b65b1]">
                       {result.queue.queueNumber}
-                    </span>
-                  </p>
-                  <p>Station: <span className="font-semibold">{result.queue.counter || result.queue.lane}</span></p>
-                  <p>Current Lane: <span className="font-semibold">{result.queue.lane}</span></p>
-                  <p>Ping Count: <span className="font-semibold">{result.queue.pingCount}/3</span></p>
-                  <p>Response: <span className="font-semibold">{result.queue.responseAt ? 'Received' : 'Not yet'}</span></p>
-                  <p className="sm:col-span-2">
-                    Pending Stations:{' '}
-                    <span className="font-semibold">
-                      {result.queue.pendingStations.length > 0 ? result.queue.pendingStations.join(', ') : 'None'}
-                    </span>
-                  </p>
-                  <p className="sm:col-span-2">
-                    Completed Stations:{' '}
-                    <span className="font-semibold">
-                      {result.queue.completedStations.length > 0 ? result.queue.completedStations.join(', ') : 'None'}
-                    </span>
-                  </p>
+                    </p>
+                    <p className="mt-4 text-[15px] font-semibold text-slate-900">
+                      {latestFormDataRef.current.firstName} {latestFormDataRef.current.lastName}
+                    </p>
+                    {result.registration?.code ? (
+                      <p className="mt-1 text-[13px] font-medium text-slate-600">
+                        Ref ID: {result.registration.code}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-[15px] text-slate-700">
+                      {result.registration?.service ?? result.queue.lane}
+                    </p>
+                    <p className="mt-1 text-[15px] text-slate-700">
+                      Pending:{' '}
+                      {result.queue.pendingStations.length > 0 ? result.queue.pendingStations.join(', ') : 'N/A'}
+                    </p>
+                    <p className="mt-1 text-[15px] text-slate-700">
+                      {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleString() : ''}
+                    </p>
+                    <div className="mt-5 flex justify-center">
+                      {queueQrDataUrl ? (
+                        <img src={queueQrDataUrl} alt="Queue QR code" className="h-44 w-44" />
+                      ) : (
+                        <div className="h-44 w-44 rounded border border-dashed border-slate-300 bg-slate-50" />
+                      )}
+                    </div>
+                    <p className="mt-5 text-xs text-slate-700">
+                      Scan QR to open the patient&apos;s active visit/profile.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border bg-white p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Station
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {result.queue.counter || result.queue.lane}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border bg-white p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Current Lane
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">{result.queue.lane}</p>
+                      </div>
+                      <div className="rounded-xl border bg-white p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Response
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {result.queue.responseAt ? 'Received' : 'Not yet'}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border bg-white p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Ping Count
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">{result.queue.pingCount}/3</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Queue Route
+                      </p>
+                      <div className="mt-3 space-y-3 text-sm">
+                        <div>
+                          <p className="font-medium text-slate-900">Pending Stations</p>
+                          <p className="mt-1 leading-6 text-slate-700">
+                            {result.queue.pendingStations.length > 0 ? result.queue.pendingStations.join(', ') : 'None'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900">Completed Stations</p>
+                          <p className="mt-1 leading-6 text-slate-700">
+                            {result.queue.completedStations.length > 0 ? result.queue.completedStations.join(', ') : 'None'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : result.registration ? (
                 <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
@@ -418,9 +528,27 @@ export default function VisitCheckPage() {
                 </Button>
               )}
 
+              {(result.queue?.status === 'requeue_required' || result.queue?.status === 'missed') && (
+                <Button
+                  type="button"
+                  className="mt-5 h-11"
+                  onClick={() => void requeueVisit()}
+                  disabled={isRequeueing}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {isRequeueing ? 'Re-Queueing...' : 'Re-Queue'}
+                </Button>
+              )}
+
               {result.queue?.status === 'requeue_required' && (
                 <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                  Your queue call expired after three notifications. Please proceed to the front desk to re-queue.
+                  Your queue call expired after three notifications. You can re-queue here to receive a new queue number.
+                </p>
+              )}
+
+              {result.queue?.status === 'missed' && (
+                <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                  Your queue call was marked missed. Re-queue to return to the waiting line with a new queue number.
                 </p>
               )}
 

@@ -15,7 +15,6 @@ type ActionBody =
   | { action: 'call_next'; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
   | { action: 'finish_step'; queueId: string }
   | { action: 'mark_missed'; queueId: string }
-  | { action: 'require_requeue'; queueId: string }
   | { action: 'requeue'; queueId: string }
   | { action: 'acknowledge_response'; queueId: string }
   | { action: 'start_step'; queueId: string; lane: Exclude<QueueLane, 'GENERAL'>; actorStaffId?: string }
@@ -23,6 +22,70 @@ type ActionBody =
 
 function createCode(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+function getManilaDayRange() {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const manilaDate = formatter.format(now);
+  const start = new Date(`${manilaDate}T00:00:00+08:00`);
+  const end = new Date(`${manilaDate}T00:00:00+08:00`);
+  end.setUTCDate(end.getUTCDate() + 1);
+
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    manilaDate,
+  };
+}
+
+function getQueuePrefix(serviceType: QueueEntryRow['service_type']) {
+  switch (serviceType) {
+    case 'pre_employment':
+      return 'P';
+    case 'check_up':
+      return 'C';
+    case 'lab':
+      return 'L';
+  }
+}
+
+async function getNextQueueNumber(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  serviceType: QueueEntryRow['service_type']
+) {
+  const { startIso, endIso } = getManilaDayRange();
+  const prefix = getQueuePrefix(serviceType);
+  const { data, error } = await supabase
+    .from('queue_entries')
+    .select('queue_number')
+    .gte('created_at', startIso)
+    .lt('created_at', endIso)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    throw error;
+  }
+
+  const maxNumber = (data ?? []).reduce((highest, item) => {
+    const [currentPrefix, numeric] = String(item.queue_number ?? '').split('-');
+
+    if (currentPrefix !== prefix) {
+      return highest;
+    }
+
+    const value = Number.parseInt(numeric ?? '0', 10);
+    return Number.isNaN(value) ? highest : Math.max(highest, value);
+  }, 0);
+
+  return `${prefix}-${String(maxNumber + 1).padStart(3, '0')}`;
 }
 
 async function getNextLabOrderNumber(supabase: ReturnType<typeof getSupabaseAdminClient>) {
@@ -517,7 +580,7 @@ export async function POST(request: Request) {
       return respondWithQueue(supabase);
     }
 
-    if (body.action === 'mark_missed' || body.action === 'require_requeue') {
+    if (body.action === 'mark_missed') {
       const row = await fetchQueueRowById(supabase, body.queueId);
 
       if (!row) {
@@ -538,13 +601,12 @@ export async function POST(request: Request) {
         }
       }
 
-      const queueStatus = body.action === 'mark_missed' ? 'missed' : 'requeue_required';
       const { error } = await supabase
         .from('queue_entries')
         .update({
-          queue_status: queueStatus,
+          queue_status: 'requeue_required',
           missed_at: now,
-          requeue_required_at: body.action === 'require_requeue' ? now : null,
+          requeue_required_at: now,
           response_at: null,
         })
         .eq('id', row.id);
@@ -576,9 +638,13 @@ export async function POST(request: Request) {
         }
       }
 
+      const nextQueueNumber = await getNextQueueNumber(supabase, row.service_type);
+      const { manilaDate } = getManilaDayRange();
       const { error } = await supabase
         .from('queue_entries')
         .update({
+          queue_number: nextQueueNumber,
+          queue_date: manilaDate,
           current_lane: 'general',
           counter_name: row.priority_lane ? 'Priority Lane' : 'General Intake',
           queue_status: 'waiting',
