@@ -7,10 +7,12 @@ import { CalendarDays, CheckCircle2, Download, SearchCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { useQueuePingSound } from '@/hooks/use-queue-ping-sound';
 import { cn } from '@/lib/utils';
 
 type VisitCheckPayload = {
   status: string;
+  patientName?: string;
   registration?: {
     code: string;
     status: string;
@@ -19,6 +21,7 @@ type VisitCheckPayload = {
   queue?: {
     id: string;
     queueNumber: string;
+    previousQueueNumber?: string | null;
     visitId: string;
     status: string;
     lane: string;
@@ -28,6 +31,8 @@ type VisitCheckPayload = {
     responseAt?: string | null;
     missedAt?: string | null;
     requeueRequiredAt?: string | null;
+    lastRequeuedAt?: string | null;
+    requeueCount: number;
     pendingStations: string[];
     completedStations: string[];
   } | null;
@@ -35,6 +40,7 @@ type VisitCheckPayload = {
     availability: string;
     orderCount: number;
     reportCount: number;
+    labOrderNumbers?: string[];
     releasedAt?: string | null;
     canView: boolean;
   };
@@ -45,7 +51,7 @@ function getStatusLabel(status: string) {
     case 'now_serving':
       return 'In Progress';
     case 'requeue_required':
-      return 'Re-Queue Required';
+      return 'Ready to Re-Queue';
     case 'missed':
       return 'Missed Call';
     case 'waiting':
@@ -74,13 +80,32 @@ function getResultLabel(availability?: string) {
   }
 }
 
+function formatSlipDateTime(value: string) {
+  const date = new Date(value);
+
+  return {
+    date: date.toLocaleDateString(),
+    time: date.toLocaleTimeString(),
+  };
+}
+
+function formatSlipService(value: string) {
+  switch (value) {
+    case 'pre_employment':
+      return 'PRE-EMPLOYMENT';
+    case 'check_up':
+      return 'CHECK-UP';
+    case 'lab':
+      return 'LAB';
+    default:
+      return value;
+  }
+}
+
 export default function VisitCheckPage() {
   const [formData, setFormData] = useState({
     registrationReference: '',
-    firstName: '',
-    lastName: '',
     birthDate: '',
-    emailAddress: '',
   });
   const [result, setResult] = useState<VisitCheckPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -89,11 +114,18 @@ export default function VisitCheckPage() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadPassword, setDownloadPassword] = useState('');
   const [downloadError, setDownloadError] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
   const [error, setError] = useState('');
   const [isLive, setIsLive] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [queueQrDataUrl, setQueueQrDataUrl] = useState('');
   const latestFormDataRef = useRef(formData);
+
+  useQueuePingSound({
+    queueId: result?.queue?.id,
+    status: result?.queue?.status,
+    responseAt: result?.queue?.responseAt,
+  });
 
   useEffect(() => {
     latestFormDataRef.current = formData;
@@ -104,6 +136,7 @@ export default function VisitCheckPage() {
       setIsLoading(true);
     }
     setError('');
+    setActionNotice('');
     setDownloadError('');
 
     try {
@@ -127,6 +160,7 @@ export default function VisitCheckPage() {
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to check visit.');
       setIsLive(false);
+      setResult(null);
     } finally {
       if (options.showLoading) {
         setIsLoading(false);
@@ -178,12 +212,15 @@ export default function VisitCheckPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, queueId: result.queue.id, action: 'acknowledge' }),
       });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; notice?: string }
+        | null;
 
       if (!response.ok) {
         throw new Error(payload?.error ?? 'Unable to acknowledge queue call.');
       }
 
+      setActionNotice(payload?.notice ?? 'Queue call acknowledged.');
       await fetchVisit();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to acknowledge queue call.');
@@ -206,12 +243,15 @@ export default function VisitCheckPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, queueId: result.queue.id, action: 'requeue' }),
       });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; notice?: string }
+        | null;
 
       if (!response.ok) {
         throw new Error(payload?.error ?? 'Unable to re-queue visit.');
       }
 
+      setActionNotice(payload?.notice ?? 'Re-queued successfully.');
       await fetchVisit({ resetPassword: true });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to re-queue visit.');
@@ -262,6 +302,8 @@ export default function VisitCheckPage() {
     }
   };
 
+  const slipDateTime = formatSlipDateTime(lastUpdatedAt ?? new Date().toISOString());
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-background to-secondary px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-3xl">
@@ -284,8 +326,8 @@ export default function VisitCheckPage() {
             </p>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">Check Visit / Results</h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              Use the registration ID together with the same patient details used during registration
-              to check today&apos;s clinic visit and queue call status.
+              Use the registration ID and birth date to check today&apos;s clinic visit, queue status,
+              and result availability.
             </p>
           </div>
 
@@ -311,63 +353,18 @@ export default function VisitCheckPage() {
               </p>
             </div>
 
-            <div className="grid gap-5 md:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
-                  First Name
-                </label>
-                <Input
-                  className="h-12"
-                  name="firstName"
-                  placeholder="Enter first name"
-                  value={formData.firstName}
-                  onChange={(event) => setFormData((current) => ({ ...current, firstName: event.target.value }))}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
-                  Last Name
-                </label>
-                <Input
-                  className="h-12"
-                  name="lastName"
-                  placeholder="Enter last name"
-                  value={formData.lastName}
-                  onChange={(event) => setFormData((current) => ({ ...current, lastName: event.target.value }))}
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
-                  Birth Date
-                </label>
-                <Input
-                  className="h-12"
-                  name="birthDate"
-                  type="date"
-                  value={formData.birthDate}
-                  onChange={(event) => setFormData((current) => ({ ...current, birthDate: event.target.value }))}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
-                  Email Address
-                </label>
-                <Input
-                  className="h-12"
-                  name="emailAddress"
-                  type="email"
-                  placeholder="name@email.com"
-                  value={formData.emailAddress}
-                  onChange={(event) => setFormData((current) => ({ ...current, emailAddress: event.target.value }))}
-                  required
-                />
-              </div>
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase text-muted-foreground">
+                Birth Date
+              </label>
+              <Input
+                className="h-12"
+                name="birthDate"
+                type="date"
+                value={formData.birthDate}
+                onChange={(event) => setFormData((current) => ({ ...current, birthDate: event.target.value }))}
+                required
+              />
             </div>
 
             <Button type="submit" className="h-12 text-base" disabled={isLoading}>
@@ -382,10 +379,16 @@ export default function VisitCheckPage() {
             </div>
           )}
 
+          {actionNotice && (
+            <div className="mt-6 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              {actionNotice}
+            </div>
+          )}
+
           {result && (
             <div
               className={cn(
-                'mt-6 rounded-md border border-border bg-muted/40 p-5',
+                'mt-6 rounded-md border border-border bg-muted/30 p-5 sm:p-6',
                 result.queue?.status === 'now_serving' &&
                   !result.queue.responseAt &&
                   'animate-pulse border-emerald-300 bg-emerald-50 ring-2 ring-emerald-300'
@@ -402,6 +405,7 @@ export default function VisitCheckPage() {
                   {isLive ? 'Live updates on' : 'Live updates off'}
                 </span>
                 {lastUpdatedAt && <span>Updated {new Date(lastUpdatedAt).toLocaleTimeString()}</span>}
+                {result.queue?.status === 'now_serving' ? <span>Call {result.queue.pingCount}/3</span> : null}
               </div>
               <h2
                 className={cn(
@@ -414,48 +418,65 @@ export default function VisitCheckPage() {
 
               {result.queue ? (
                 <div className="mt-5">
-                  <div className="mb-3 flex justify-end">
-                    <p className="text-xs text-muted-foreground">Call: {result.queue.pingCount}/3</p>
-                  </div>
-
-                  <div className="mx-auto w-full max-w-[360px] rounded-[22px] border border-[#bfd0e3] bg-white px-6 py-5 text-center shadow-sm">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#0b65b1]">
+                  <div className="mx-auto w-full max-w-sm rounded-[18px] border border-slate-300 bg-white p-6 text-center shadow-sm">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-[#0b65b1]">
                       Globalife Medical Laboratory &amp; Polyclinic
                     </p>
-                    <p className="mt-3 text-[22px] font-bold text-slate-900">Queue Slip</p>
-                    <p className="mt-3 text-[64px] font-black leading-none text-[#0b65b1]">
+                    <p className="mt-2 text-2xl font-bold text-slate-900">Queue Slip</p>
+                    <p className="mt-3 text-[52px] font-black leading-none text-[#0b65b1]">
                       {result.queue.queueNumber}
                     </p>
-                    <p className="mt-4 text-[15px] font-semibold text-slate-900">
-                      {latestFormDataRef.current.firstName} {latestFormDataRef.current.lastName}
-                    </p>
-                    {result.registration?.code ? (
-                      <p className="mt-1 text-[13px] font-medium text-slate-600">
-                        Ref ID: {result.registration.code}
-                      </p>
-                    ) : null}
-                    <p className="mt-1 text-[15px] text-slate-700">
-                      {result.registration?.service ?? result.queue.lane}
-                    </p>
-                    <p className="mt-1 text-[15px] text-slate-700">
-                      {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleString() : ''}
-                    </p>
-                    <div className="mt-5 flex justify-center">
+
+                    <div className="mt-4 space-y-1 text-sm leading-6 text-slate-600">
+                      <p className="font-semibold text-slate-900">{result.patientName || 'Patient'}</p>
+                      {result.registration?.code ? (
+                        <p>
+                          Registration ID:{' '}
+                          <span className="font-semibold text-slate-900">{result.registration.code}</span>
+                        </p>
+                      ) : null}
+                      <p>Service: {formatSlipService(result.registration?.service ?? result.queue.lane)}</p>
+                      <p>Lab Order: {result.result?.labOrderNumbers?.join(', ') || 'N/A'}</p>
+                      <p>Pending: {result.queue.pendingStations.join(', ') || 'N/A'}</p>
+                      <p>Date: {slipDateTime.date}</p>
+                      <p>Time: {slipDateTime.time}</p>
+                    </div>
+
+                    <div className="mt-4 flex justify-center">
                       {queueQrDataUrl ? (
-                        <img src={queueQrDataUrl} alt="Queue QR code" className="h-44 w-44" />
+                        <div className="rounded-lg border border-slate-200 bg-white p-2">
+                          <img src={queueQrDataUrl} alt="Queue QR code" className="h-32 w-32" />
+                        </div>
                       ) : (
-                        <div className="h-44 w-44 rounded border border-dashed border-slate-300 bg-slate-50" />
+                        <div className="h-36 w-36 rounded border border-dashed border-slate-300 bg-slate-50" />
                       )}
                     </div>
-                    <p className="mt-5 text-xs text-slate-700">
+                    <p className="mt-4 text-xs text-slate-500">
                       Scan QR to open the patient&apos;s active visit/profile.
                     </p>
                   </div>
+
+                  <div className="mt-4 space-y-2 text-center text-sm text-muted-foreground">
+                    {result.queue.previousQueueNumber ? (
+                      <p>
+                        Re-queued from <span className="font-semibold text-foreground">{result.queue.previousQueueNumber}</span>{' '}
+                        to <span className="font-semibold text-foreground">{result.queue.queueNumber}</span>.
+                      </p>
+                    ) : null}
+                    {result.queue.requeueCount > 0 ? (
+                      <p>
+                        Re-queued {result.queue.requeueCount} time{result.queue.requeueCount > 1 ? 's' : ''}.
+                        Completed stations stay completed.
+                      </p>
+                    ) : result.queue.completedStations.length > 0 ? (
+                      <p>Completed stations stay completed. Only remaining stations continue.</p>
+                    ) : null}
+                  </div>
                 </div>
               ) : result.registration ? (
-                <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                  <p>Registration Code: <span className="font-semibold">{result.registration.code}</span></p>
-                  <p>Service: <span className="font-semibold">{result.registration.service}</span></p>
+                <div className="mt-4 space-y-1 text-sm text-muted-foreground">
+                  <p>Registration ID: <span className="font-semibold text-foreground">{result.registration.code}</span></p>
+                  <p>Service: <span className="font-semibold text-foreground">{result.registration.service}</span></p>
                 </div>
               ) : (
                 <p className="mt-4 text-sm text-muted-foreground">
@@ -488,19 +509,19 @@ export default function VisitCheckPage() {
               )}
 
               {result.queue?.status === 'requeue_required' && (
-                <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                  Your queue call expired after three notifications. You can re-queue here to receive a new queue number.
+                <p className="mt-5 text-sm text-amber-800">
+                  Your call was not acknowledged after three calls. Re-queue to continue the remaining stations with a new queue number.
                 </p>
               )}
 
               {result.queue?.status === 'missed' && (
-                <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                  Your queue call was marked missed. Re-queue to return to the waiting line with a new queue number.
+                <p className="mt-5 text-sm text-amber-800">
+                  Your queue was marked missed. Re-queue to return to the waiting line. Completed stations will be kept.
                 </p>
               )}
 
               {result.queue && (
-                <div className="mt-5 rounded-md border border-border bg-background p-4">
+                <div className="mt-6 border-t border-border pt-5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Result Status
                   </p>

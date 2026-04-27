@@ -23,6 +23,7 @@ type DbLabService = 'blood_test' | 'drug_test' | 'xray' | 'ecg' | null;
 export interface QueueEntryRow {
   id: string;
   queue_number: string;
+  previous_queue_number?: string | null;
   service_type: DbServiceType;
   requested_lab_service: DbLabService;
   current_lane: DbQueueLane;
@@ -33,6 +34,8 @@ export interface QueueEntryRow {
   now_serving_at: string | null;
   missed_at?: string | null;
   requeue_required_at?: string | null;
+  last_requeued_at?: string | null;
+  requeue_count?: number | null;
   notification_ping_count?: number | null;
   last_ping_at?: string | null;
   response_at?: string | null;
@@ -184,6 +187,7 @@ export function mapQueueEntryRow(row: QueueEntryRow): QueueEntry {
   return {
     id: row.id,
     queueNumber: row.queue_number,
+    previousQueueNumber: row.previous_queue_number ?? undefined,
     patientName: toPatientFullName(row.patients),
     serviceType: dbServiceToUiService(row.service_type),
     requestedLabLane: dbLabServiceToUiRequestedLane(row.requested_lab_service),
@@ -197,6 +201,8 @@ export function mapQueueEntryRow(row: QueueEntryRow): QueueEntry {
     calledAt: row.now_serving_at ?? undefined,
     missedAt: row.missed_at ?? undefined,
     requeueRequiredAt: row.requeue_required_at ?? undefined,
+    lastRequeuedAt: row.last_requeued_at ?? undefined,
+    requeueCount: Number(row.requeue_count ?? 0),
     notificationPingCount: Number(row.notification_ping_count ?? 0),
     lastPingAt: row.last_ping_at ?? undefined,
     responseAt: row.response_at ?? undefined,

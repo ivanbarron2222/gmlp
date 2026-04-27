@@ -125,6 +125,7 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
     .select(`
       id,
       queue_number,
+      previous_queue_number,
       service_type,
       requested_lab_service,
       current_lane,
@@ -135,6 +136,8 @@ async function fetchQueueRows(supabase: ReturnType<typeof getSupabaseAdminClient
       now_serving_at,
       missed_at,
       requeue_required_at,
+      last_requeued_at,
+      requeue_count,
       notification_ping_count,
       last_ping_at,
       response_at,
@@ -640,9 +643,11 @@ export async function POST(request: Request) {
 
       const nextQueueNumber = await getNextQueueNumber(supabase, row.service_type);
       const { manilaDate } = getManilaDayRange();
+      const now = new Date().toISOString();
       const { error } = await supabase
         .from('queue_entries')
         .update({
+          previous_queue_number: row.queue_number,
           queue_number: nextQueueNumber,
           queue_date: manilaDate,
           current_lane: 'general',
@@ -651,6 +656,8 @@ export async function POST(request: Request) {
           now_serving_at: null,
           missed_at: null,
           requeue_required_at: null,
+          last_requeued_at: now,
+          requeue_count: Number(row.requeue_count ?? 0) + 1,
           notification_ping_count: 0,
           last_ping_at: null,
           response_at: null,

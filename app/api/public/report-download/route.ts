@@ -12,6 +12,10 @@ function normalizeEmail(value: unknown) {
   return normalize(value).toLowerCase();
 }
 
+function normalizeRegistrationReference(value: unknown) {
+  return normalize(value).toUpperCase();
+}
+
 function normalizePassword(value: unknown) {
   return normalize(value).replace(/\s+/g, '').toLowerCase();
 }
@@ -112,38 +116,80 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const queueId = normalize(body.queueId);
+    const registrationReference = normalizeRegistrationReference(body.registrationReference);
     const firstName = normalize(body.firstName);
     const lastName = normalize(body.lastName);
     const birthDate = normalize(body.birthDate);
     const emailAddress = normalizeEmail(body.emailAddress);
     const password = normalizePassword(body.password);
 
-    if (!queueId || !firstName || !lastName || !birthDate || !emailAddress || !password) {
+    if (!queueId || !birthDate || !password) {
       return NextResponse.json(
-        { error: 'Queue reference, patient details, and password are required.' },
+        { error: 'Queue reference, birth date, and password are required.' },
         { status: 400 }
       );
     }
 
     const supabase = getSupabaseAdminClient();
-    const { data: patients, error: patientError } = await supabase
-      .from('patients')
-      .select('id, patient_code, last_name')
-      .ilike('first_name', firstName)
-      .ilike('last_name', lastName)
-      .eq('birth_date', birthDate)
-      .ilike('email_address', emailAddress)
-      .limit(5);
+    let patientRows: Array<{ id: string; patient_code: string | null; last_name: string }> = [];
 
-    if (patientError) {
-      throw patientError;
+    if (registrationReference) {
+      const { data: registration, error: registrationError } = await supabase
+        .from('self_registrations')
+        .select('patient_id')
+        .ilike('registration_code', registrationReference)
+        .eq('birth_date', birthDate)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (registrationError) {
+        throw registrationError;
+      }
+
+      if (registration?.patient_id) {
+        const { data: patient, error: patientError } = await supabase
+          .from('patients')
+          .select('id, patient_code, last_name')
+          .eq('id', String(registration.patient_id))
+          .maybeSingle();
+
+        if (patientError) {
+          throw patientError;
+        }
+
+        if (patient) {
+          patientRows = [
+            {
+              id: String(patient.id),
+              patient_code: patient.patient_code ? String(patient.patient_code) : null,
+              last_name: String(patient.last_name ?? ''),
+            },
+          ];
+        }
+      }
     }
 
-    const patientRows = (patients ?? []).map((patient) => ({
-      id: String(patient.id),
-      patient_code: patient.patient_code ? String(patient.patient_code) : null,
-      last_name: String(patient.last_name ?? ''),
-    }));
+    if (!patientRows.length && firstName && lastName && emailAddress) {
+      const { data: patients, error: patientError } = await supabase
+        .from('patients')
+        .select('id, patient_code, last_name')
+        .ilike('first_name', firstName)
+        .ilike('last_name', lastName)
+        .eq('birth_date', birthDate)
+        .ilike('email_address', emailAddress)
+        .limit(5);
+
+      if (patientError) {
+        throw patientError;
+      }
+
+      patientRows = (patients ?? []).map((patient) => ({
+        id: String(patient.id),
+        patient_code: patient.patient_code ? String(patient.patient_code) : null,
+        last_name: String(patient.last_name ?? ''),
+      }));
+    }
 
     if (patientRows.length === 0) {
       return NextResponse.json({ error: 'Patient verification failed.' }, { status: 404 });

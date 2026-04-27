@@ -15,6 +15,7 @@ export type ServiceType =
 export interface QueueEntry {
   id: string;
   queueNumber: string;
+  previousQueueNumber?: string;
   patientName: string;
   serviceType: ServiceType;
   requestedLabLane?: Exclude<QueueLane, 'GENERAL' | 'DOCTOR'>;
@@ -28,6 +29,8 @@ export interface QueueEntry {
   calledAt?: string;
   missedAt?: string;
   requeueRequiredAt?: string;
+  lastRequeuedAt?: string;
+  requeueCount?: number;
   notificationPingCount?: number;
   lastPingAt?: string;
   responseAt?: string;

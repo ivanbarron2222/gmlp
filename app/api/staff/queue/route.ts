@@ -18,6 +18,7 @@ export async function GET() {
       .select(`
         id,
         queue_number,
+        previous_queue_number,
         service_type,
         requested_lab_service,
         current_lane,
@@ -28,6 +29,8 @@ export async function GET() {
         now_serving_at,
         missed_at,
         requeue_required_at,
+        last_requeued_at,
+        requeue_count,
         notification_ping_count,
         last_ping_at,
         response_at,
@@ -54,6 +57,7 @@ export async function GET() {
         .select(`
           id,
           queue_number,
+          previous_queue_number,
           service_type,
           requested_lab_service,
           current_lane,
@@ -64,6 +68,8 @@ export async function GET() {
           now_serving_at,
           missed_at,
           requeue_required_at,
+          last_requeued_at,
+          requeue_count,
           notification_ping_count,
           last_ping_at,
           response_at,

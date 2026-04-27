@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AlertCircle, CheckCircle2, QrCode } from 'lucide-react';
+import { useQueuePingSound } from '@/hooks/use-queue-ping-sound';
 import {
   addPendingRegistration,
   PendingRegistration,
@@ -29,6 +30,69 @@ type PublicPartnerCompany = {
   companyName: string;
   requirements?: Record<string, string[]>;
 };
+
+type RegistrationVisitStatus = {
+  status: string;
+  patientName?: string;
+  registration?: {
+    code: string;
+    status: string;
+    service: string;
+  } | null;
+  result?: {
+    labOrderNumbers?: string[];
+  };
+  queue?: {
+    id: string;
+    queueNumber: string;
+    status: string;
+    counter: string;
+    pingCount: number;
+    responseAt?: string | null;
+    requeueCount: number;
+    previousQueueNumber?: string | null;
+    pendingStations: string[];
+  } | null;
+} | null;
+
+function getQueueStatusLabel(status: string) {
+  switch (status) {
+    case 'now_serving':
+      return 'Now Serving';
+    case 'requeue_required':
+      return 'Ready to Re-Queue';
+    case 'missed':
+      return 'Missed Call';
+    case 'waiting':
+      return 'Waiting';
+    case 'completed':
+      return 'Completed';
+    default:
+      return status.replaceAll('_', ' ');
+  }
+}
+
+function formatSlipDateTime(value: string) {
+  const date = new Date(value);
+
+  return {
+    date: date.toLocaleDateString(),
+    time: date.toLocaleTimeString(),
+  };
+}
+
+function formatSlipService(value: string) {
+  switch (value) {
+    case 'pre_employment':
+      return 'PRE-EMPLOYMENT';
+    case 'check_up':
+      return 'CHECK-UP';
+    case 'lab':
+      return 'LAB';
+    default:
+      return value;
+  }
+}
 
 export default function PatientRegistrationPage() {
   const [companyOptions, setCompanyOptions] = useState<PublicPartnerCompany[]>([]);
@@ -55,7 +119,18 @@ export default function PatientRegistrationPage() {
   const [submittedRegistration, setSubmittedRegistration] = useState<PendingRegistration | null>(null);
   const [queueQrDataUrl, setQueueQrDataUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [visitStatus, setVisitStatus] = useState<RegistrationVisitStatus>(null);
+  const [lastStatusUpdatedAt, setLastStatusUpdatedAt] = useState<string | null>(null);
+  const [isAcknowledging, setIsAcknowledging] = useState(false);
+  const [isRequeueing, setIsRequeueing] = useState(false);
+  const [queueActionNotice, setQueueActionNotice] = useState('');
   const [submitError, setSubmitError] = useState('');
+
+  useQueuePingSound({
+    queueId: visitStatus?.queue?.id,
+    status: visitStatus?.queue?.status,
+    responseAt: visitStatus?.queue?.responseAt,
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -291,6 +366,9 @@ export default function PatientRegistrationPage() {
         selectedServiceCodes: formData.selectedServiceCodes,
       } as RegistrationFormInput);
       setSubmittedRegistration(registration);
+      setVisitStatus(null);
+      setLastStatusUpdatedAt(null);
+      setQueueActionNotice('');
       setIsSubmitted(true);
     } catch (error) {
       setSubmitError(
@@ -301,9 +379,11 @@ export default function PatientRegistrationPage() {
     }
   };
 
-  const fullName = [formData.firstName, formData.middleName, formData.lastName]
-    .filter(Boolean)
-    .join(' ');
+  const submittedPatientName = submittedRegistration
+    ? [submittedRegistration.firstName, submittedRegistration.middleName, submittedRegistration.lastName]
+        .filter(Boolean)
+        .join(' ')
+    : [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' ');
 
   useEffect(() => {
     const queueId = submittedRegistration?.queueEntry?.id;
@@ -318,15 +398,123 @@ export default function PatientRegistrationPage() {
       .catch(() => setQueueQrDataUrl(''));
   }, [submittedRegistration?.queueEntry?.id]);
 
+  const fetchRegisteredVisitStatus = useCallback(async () => {
+    if (!submittedRegistration?.registrationCode || !submittedRegistration.birthDate) {
+      return;
+    }
+
+    const response = await fetch('/api/public/visit-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        registrationReference: submittedRegistration.registrationCode,
+        birthDate: submittedRegistration.birthDate,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | (NonNullable<RegistrationVisitStatus> & { error?: string })
+      | null;
+
+    if (!response.ok || !payload) {
+      throw new Error(payload?.error ?? 'Unable to refresh queue status.');
+    }
+
+    setVisitStatus(payload);
+    setLastStatusUpdatedAt(new Date().toISOString());
+  }, [submittedRegistration?.birthDate, submittedRegistration?.registrationCode]);
+
+  useEffect(() => {
+    if (!isSubmitted || !submittedRegistration?.registrationCode) {
+      return;
+    }
+
+    void fetchRegisteredVisitStatus().catch(() => undefined);
+    const intervalId = window.setInterval(() => {
+      void fetchRegisteredVisitStatus().catch(() => undefined);
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [fetchRegisteredVisitStatus, isSubmitted, submittedRegistration?.registrationCode]);
+
+  const acknowledgeRegisteredCall = async () => {
+    if (!submittedRegistration?.registrationCode || !submittedRegistration.birthDate || !visitStatus?.queue?.id) {
+      return;
+    }
+
+    setIsAcknowledging(true);
+    setSubmitError('');
+
+    try {
+      const response = await fetch('/api/public/visit-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          registrationReference: submittedRegistration.registrationCode,
+          birthDate: submittedRegistration.birthDate,
+          queueId: visitStatus.queue.id,
+          action: 'acknowledge',
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string; notice?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Unable to acknowledge queue call.');
+      }
+
+      setQueueActionNotice(payload?.notice ?? 'Queue call acknowledged.');
+      await fetchRegisteredVisitStatus();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Unable to acknowledge queue call.');
+    } finally {
+      setIsAcknowledging(false);
+    }
+  };
+
+  const requeueRegisteredVisit = async () => {
+    if (!submittedRegistration?.registrationCode || !submittedRegistration.birthDate || !visitStatus?.queue?.id) {
+      return;
+    }
+
+    setIsRequeueing(true);
+    setSubmitError('');
+
+    try {
+      const response = await fetch('/api/public/visit-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          registrationReference: submittedRegistration.registrationCode,
+          birthDate: submittedRegistration.birthDate,
+          queueId: visitStatus.queue.id,
+          action: 'requeue',
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string; notice?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Unable to re-queue visit.');
+      }
+
+      setQueueActionNotice(payload?.notice ?? 'Re-queued successfully.');
+      await fetchRegisteredVisitStatus();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Unable to re-queue visit.');
+    } finally {
+      setIsRequeueing(false);
+    }
+  };
+
   if (isSubmitted) {
     const queueEntry = submittedRegistration?.queueEntry;
-    const submittedAt = submittedRegistration?.submittedAt
-      ? new Date(submittedRegistration.submittedAt).toLocaleString()
-      : new Date().toLocaleString();
-    const slipNumber = queueEntry?.queueNumber ?? submittedRegistration?.registrationCode ?? 'Pending';
-    const slipService = queueEntry?.serviceType ?? formData.serviceNeeded;
-    const slipPending = queueEntry?.pendingLanes?.join(', ') || 'N/A';
-    const slipLabNumbers = submittedRegistration?.labNumbers?.join(', ') || 'N/A';
+    const activeQueue = visitStatus?.queue;
+    const registrationCode = submittedRegistration?.registrationCode ?? '';
+    const slipNumber = activeQueue?.queueNumber ?? queueEntry?.queueNumber ?? registrationCode ?? 'Pending';
+    const slipName = visitStatus?.patientName || submittedPatientName || 'Patient';
+    const slipService = formatSlipService(visitStatus?.registration?.service ?? queueEntry?.serviceType ?? formData.serviceNeeded);
+    const slipPending = activeQueue?.pendingStations?.join(', ') || queueEntry?.pendingLanes?.join(', ') || 'N/A';
+    const slipLabOrders =
+      visitStatus?.result?.labOrderNumbers?.join(', ') || submittedRegistration?.labNumbers?.join(', ') || 'N/A';
+    const slipDateTime = formatSlipDateTime(lastStatusUpdatedAt ?? submittedRegistration?.submittedAt ?? new Date().toISOString());
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-background to-secondary flex items-center justify-center p-4 py-12">
@@ -352,16 +540,17 @@ export default function PatientRegistrationPage() {
                 <p className="mt-3 text-[52px] font-black leading-none text-[#0b65b1]">{slipNumber}</p>
 
                 <div className="mt-4 space-y-1 text-sm leading-6 text-slate-600">
-                  <p className="font-semibold text-slate-900">{fullName}</p>
-                  <p>{slipLabNumbers !== 'N/A' ? `Lab No: ${slipLabNumbers}` : 'Lab No: N/A'}</p>
-                  <p>{slipService}</p>
-                  <p>Pending: {slipPending}</p>
-                  <p>{submittedAt}</p>
-                  {formData.company ? <p>Company: {formData.company}</p> : null}
-                  <p>Station: {queueEntry?.counter ?? 'General Intake'}</p>
-                  {selectedLabServices.length > 0 ? (
-                    <p>{selectedLabServices.map((service) => service.name).join(', ')}</p>
+                  <p className="font-semibold text-slate-900">{slipName}</p>
+                  {registrationCode ? (
+                    <p>
+                      Registration ID: <span className="font-semibold text-slate-900">{registrationCode}</span>
+                    </p>
                   ) : null}
+                  <p>Service: {slipService}</p>
+                  <p>Lab Order: {slipLabOrders}</p>
+                  <p>Pending: {slipPending}</p>
+                  <p>Date: {slipDateTime.date}</p>
+                  <p>Time: {slipDateTime.time}</p>
                 </div>
 
                 {queueQrDataUrl ? (
@@ -379,9 +568,70 @@ export default function PatientRegistrationPage() {
                 )}
 
                 <p className="mt-4 text-xs text-slate-500">
-                  Scan QR to open the patient&apos;s active visit/profile.
+                  Use the Registration ID in Check Visits. Scan QR to open the patient&apos;s active visit/profile.
                 </p>
               </div>
+            </div>
+
+            <div className="mb-6 rounded-lg border border-border bg-muted/30 p-4 text-left">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Queue Status
+                  </p>
+                  <p className="mt-1 text-xl font-bold">
+                    {activeQueue ? getQueueStatusLabel(activeQueue.status) : 'Waiting'}
+                  </p>
+                  {lastStatusUpdatedAt ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Updated {new Date(lastStatusUpdatedAt).toLocaleTimeString()}
+                    </p>
+                  ) : null}
+                </div>
+                {activeQueue?.status === 'now_serving' ? (
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Call {activeQueue.pingCount}/3
+                  </span>
+                ) : null}
+              </div>
+
+              {activeQueue?.status === 'now_serving' && !activeQueue.responseAt ? (
+                <Button
+                  type="button"
+                  className="mt-4 h-10"
+                  onClick={() => void acknowledgeRegisteredCall()}
+                  disabled={isAcknowledging}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {isAcknowledging ? 'Sending...' : "I'm Here"}
+                </Button>
+              ) : null}
+
+              {(activeQueue?.status === 'requeue_required' || activeQueue?.status === 'missed') ? (
+                <Button
+                  type="button"
+                  className="mt-4 h-10"
+                  onClick={() => void requeueRegisteredVisit()}
+                  disabled={isRequeueing}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {isRequeueing ? 'Re-Queueing...' : 'Re-Queue'}
+                </Button>
+              ) : null}
+
+              {queueActionNotice ? (
+                <p className="mt-3 text-sm text-emerald-700">{queueActionNotice}</p>
+              ) : null}
+
+              {submitError ? (
+                <p className="mt-3 text-sm text-red-700">{submitError}</p>
+              ) : null}
+
+              {activeQueue?.status === 'requeue_required' ? (
+                <p className="mt-3 text-sm text-amber-800">
+                  Your call was not acknowledged after three calls. Re-queue to continue with a new queue number.
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row">

@@ -27,12 +27,20 @@ import {
 
 function QueueMeta({ item }: { item: QueueEntry }) {
   return (
-    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-      {item.serviceType}
-      {item.pendingLanes.length > 0
-        ? ` | Remaining: ${item.pendingLanes.join(' -> ')}`
-        : ' | No remaining steps'}
-    </p>
+    <div className="mt-1 space-y-1 text-xs leading-5 text-muted-foreground">
+      <p>
+        {item.serviceType}
+        {item.pendingLanes.length > 0
+          ? ` | Remaining: ${item.pendingLanes.join(' -> ')}`
+          : ' | No remaining steps'}
+      </p>
+      {item.requeueCount && item.requeueCount > 0 ? (
+        <p>
+          Re-queued {item.requeueCount}x
+          {item.previousQueueNumber ? ` | Prev ${item.previousQueueNumber}` : ''}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -261,7 +269,7 @@ export default function QueueManagementPage() {
                   </p>
                   <h2 className="mt-2 text-2xl font-bold">{lane}</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Use one action only. `Call Next` automatically completes the current patient in this station and moves the next patient into in progress.
+                    Use one action only. `Call Next` automatically completes the current patient in this station and starts the next eligible patient.
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-1">
