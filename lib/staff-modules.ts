@@ -34,19 +34,18 @@ export function getDefaultAllowedModules(role: StationRole): StaffModulePath[] {
     case 'admin':
       return moduleCatalog.map((moduleItem) => moduleItem.href);
     case 'nurse':
-      return ['/dashboard', '/staff/doctors', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'];
+      return ['/staff/doctors', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'];
     case 'blood-test':
     case 'drug-test':
     case 'xray':
     case 'ecg':
-      return ['/dashboard', '/staff/queue', '/staff/lab-orders'];
+      return ['/staff/queue', '/staff/lab-orders', '/staff/patient-records'];
     case 'encoder':
-      return ['/dashboard', '/staff/patient-records', '/staff/result-release'];
+      return ['/staff/patient-records', '/staff/result-release'];
     case 'doctor':
-      return ['/dashboard', '/staff/queue', '/staff/result-encoding', '/staff/patient-records'];
+      return ['/staff/queue', '/staff/result-encoding', '/staff/patient-records'];
     case 'cashier':
       return [
-        '/dashboard',
         '/staff/patient-registration',
         '/staff/queue',
         '/staff/cashier',

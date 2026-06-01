@@ -827,6 +827,11 @@ export default function PatientRecordsPage() {
                 {selectedVisit.queueEntryId && (
                   <div className="flex flex-wrap justify-end gap-2">
                     <Button asChild variant="outline" size="sm">
+                      <Link href={`/staff/patients/${encodeURIComponent(selectedVisit.patientId)}`}>
+                        Open Patient Profile
+                      </Link>
+                    </Button>
+                    <Button asChild variant="outline" size="sm">
                       <Link href={`/staff/result-release?queueId=${encodeURIComponent(selectedVisit.queueEntryId)}`}>
                         Open Result Release
                       </Link>

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import { requireAdminStaffAccess } from '@/lib/supabase/admin-auth';
 
 type DbServiceType = 'pre_employment' | 'check_up' | 'lab';
 type DbReportStatus = 'draft' | 'validated' | 'released';
@@ -59,9 +59,9 @@ function formatServiceLabel(service: DbServiceType) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const supabase = getSupabaseAdminClient();
+    const { supabase } = await requireAdminStaffAccess(request);
     const { startIso, endIso } = getManilaDayRange();
     const last7Dates = getLast7ManilaDates();
 

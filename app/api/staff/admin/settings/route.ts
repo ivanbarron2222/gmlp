@@ -3,6 +3,11 @@ import { getDefaultActionPermissions, sanitizeActionPermissions } from '@/lib/ac
 import { requireAdminStaffAccess } from '@/lib/supabase/admin-auth';
 import { getDefaultAllowedModules, sanitizeAllowedModules } from '@/lib/staff-modules';
 import { mapDbRoleToStationRole } from '@/lib/station-role';
+import {
+  getLegacyRoleForAccount,
+  type DepartmentCode,
+  type JobPositionCode,
+} from '@/lib/staff-account';
 
 type StaffRoleDb =
   | 'admin'
@@ -96,7 +101,7 @@ export async function GET(request: Request) {
         .order('full_name', { ascending: true }),
       supabase
         .from('staff_profiles')
-        .select('id, email, full_name, role, assigned_lane, is_active, updated_at, allowed_modules, action_permissions')
+        .select('id, email, full_name, role, assigned_lane, is_active, updated_at, allowed_modules, action_permissions, departments(code, name), job_positions(code, name)')
         .order('full_name', { ascending: true }),
       supabase
         .from('inventory_items')
@@ -287,7 +292,9 @@ export async function POST(request: Request) {
             email: string;
             password: string;
             full_name: string;
-            role: StaffRoleDb;
+            role?: StaffRoleDb;
+            department_code?: DepartmentCode;
+            job_position_code?: JobPositionCode;
             is_active?: boolean;
             allowed_modules?: string[];
             action_permissions?: string[];
@@ -522,23 +529,38 @@ export async function POST(request: Request) {
 
     if (body.kind === 'staff') {
       const staff = body.staff;
-      if (!staff?.role || !staff.full_name || (!staff.id && (!staff.email || !staff.password))) {
+      if (!staff?.department_code || !staff.job_position_code || !staff.full_name || (!staff.id && (!staff.email || !staff.password))) {
         return NextResponse.json({ error: 'Missing staff account fields.' }, { status: 400 });
       }
 
-      const stationRole = mapDbRoleToStationRole(staff.role);
+      const accountRole = getLegacyRoleForAccount(staff.department_code, staff.job_position_code);
+      const dbRole = accountRole.dbRole as StaffRoleDb;
+      const stationRole = mapDbRoleToStationRole(dbRole);
       const defaultModules = stationRole ? getDefaultAllowedModules(stationRole) : [];
       const defaultPermissions = stationRole ? getDefaultActionPermissions(stationRole) : [];
       const allowedModules = sanitizeAllowedModules(staff.allowed_modules ?? defaultModules);
       const actionPermissions = sanitizeActionPermissions(staff.action_permissions ?? defaultPermissions);
+      const [{ data: department, error: departmentError }, { data: jobPosition, error: jobPositionError }] = await Promise.all([
+        supabase.from('departments').select('id').eq('code', staff.department_code).single(),
+        supabase.from('job_positions').select('id').eq('code', staff.job_position_code).single(),
+      ]);
+
+      if (departmentError || !department) {
+        throw new Error(departmentError?.message ?? 'Department not found.');
+      }
+      if (jobPositionError || !jobPosition) {
+        throw new Error(jobPositionError?.message ?? 'Job position not found.');
+      }
 
       if (staff.id) {
         const { data: profile, error: profileError } = await supabase
           .from('staff_profiles')
           .update({
             full_name: staff.full_name.trim(),
-            role: staff.role,
-            assigned_lane: staff.assigned_lane ?? toAssignedLane(staff.role),
+            role: dbRole,
+            assigned_lane: accountRole.assignedLane,
+            department_id: department.id,
+            job_position_id: jobPosition.id,
             is_active: staff.is_active ?? true,
             allowed_modules: allowedModules,
             action_permissions: actionPermissions,
@@ -570,8 +592,10 @@ export async function POST(request: Request) {
           id: createdUser.user.id,
           email: staff.email.trim(),
           full_name: staff.full_name.trim(),
-          role: staff.role,
-          assigned_lane: staff.assigned_lane ?? toAssignedLane(staff.role),
+          role: dbRole,
+          assigned_lane: accountRole.assignedLane,
+          department_id: department.id,
+          job_position_id: jobPosition.id,
           is_active: staff.is_active ?? true,
           allowed_modules: allowedModules,
           action_permissions: actionPermissions,

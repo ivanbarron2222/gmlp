@@ -27,6 +27,15 @@ import { readStationRole } from '@/lib/station-role';
 import { formatCurrency } from '@/lib/formatting';
 import { getDefaultAllowedModules, moduleCatalog, type StaffModulePath } from '@/lib/staff-modules';
 import { mapDbRoleToStationRole } from '@/lib/station-role';
+import {
+  departmentCatalog,
+  getDepartmentLabel,
+  getJobPositionLabel,
+  getLegacyRoleForAccount,
+  jobPositionCatalog,
+  type DepartmentCode,
+  type JobPositionCode,
+} from '@/lib/staff-account';
 
 type ServiceCatalogRow = {
   id: string;
@@ -66,6 +75,8 @@ type StaffProfileRow = {
   is_active: boolean;
   allowed_modules?: StaffModulePath[];
   action_permissions?: ActionPermission[];
+  departments?: { code: DepartmentCode; name: string } | null;
+  job_positions?: { code: JobPositionCode; name: string } | null;
   updated_at?: string;
 };
 
@@ -103,7 +114,8 @@ const initialStaffForm = {
   email: '',
   password: '',
   full_name: '',
-  role: 'nurse',
+  department_code: 'clinical_exam' as DepartmentCode,
+  job_position_code: 'nurse' as JobPositionCode,
 };
 
 const initialDoctorForm = {
@@ -113,6 +125,8 @@ const initialDoctorForm = {
 const initialStaffEditForm = {
   full_name: '',
   role: 'nurse',
+  department_code: 'clinical_exam' as DepartmentCode,
+  job_position_code: 'nurse' as JobPositionCode,
   is_active: true,
   allowed_modules: [] as StaffModulePath[],
   action_permissions: [] as ActionPermission[],
@@ -392,12 +406,9 @@ export default function AdminSettingsPage() {
 
   const handleStaffSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const defaultModules = mapDbRoleToStationRole(staffForm.role)
-      ? getDefaultAllowedModules(mapDbRoleToStationRole(staffForm.role)!)
-      : [];
-    const defaultPermissions = mapDbRoleToStationRole(staffForm.role)
-      ? getDefaultActionPermissions(mapDbRoleToStationRole(staffForm.role)!)
-      : [];
+    const accountRole = getLegacyRoleForAccount(staffForm.department_code, staffForm.job_position_code);
+    const defaultModules = getDefaultAllowedModules(accountRole.stationRole);
+    const defaultPermissions = getDefaultActionPermissions(accountRole.stationRole);
     await submitAdminAction(
       {
         kind: 'staff',
@@ -437,6 +448,8 @@ export default function AdminSettingsPage() {
     setStaffEditForm({
       full_name: member.full_name,
       role: member.role,
+      department_code: member.departments?.code ?? 'administration',
+      job_position_code: member.job_positions?.code ?? 'encoder',
       is_active: member.is_active,
       allowed_modules:
         member.allowed_modules && member.allowed_modules.length > 0
@@ -522,6 +535,8 @@ export default function AdminSettingsPage() {
           email: editingStaff.email,
           full_name: staffEditForm.full_name,
           role: staffEditForm.role as StaffProfileRow['role'],
+          department_code: staffEditForm.department_code,
+          job_position_code: staffEditForm.job_position_code,
           is_active: staffEditForm.is_active,
           allowed_modules: staffEditForm.allowed_modules,
           action_permissions: staffEditForm.action_permissions,
@@ -1102,25 +1117,29 @@ export default function AdminSettingsPage() {
                       <Input id="staff_password" type="password" value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} placeholder="••••••••" required />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="staff_role">Role</Label>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                    <Label htmlFor="staff_department">Department</Label>
                     <select
-                      id="staff_role"
-                      value={staffForm.role}
-                      onChange={(event) => setStaffForm((current) => ({ ...current, role: event.target.value }))}
+                      id="staff_department"
+                      value={staffForm.department_code}
+                      onChange={(event) => setStaffForm((current) => ({ ...current, department_code: event.target.value as DepartmentCode }))}
                       className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     >
-                      <option value="admin">Admin</option>
-                      <option value="nurse">Nurse</option>
-                      <option value="blood_test">Blood Test</option>
-                      <option value="drug_test">Drug Test</option>
-                      <option value="doctor">Doctor</option>
-                      <option value="xray">Xray</option>
-                      <option value="ecg">ECG</option>
-                      <option value="encoder">Encoder</option>
-                      <option value="cashier">Cashier</option>
-                      <option value="pathologist">Pathologist</option>
+                      {departmentCatalog.map((department) => <option key={department.code} value={department.code}>{department.label}</option>)}
                     </select>
+                    </div>
+                    <div className="space-y-2">
+                    <Label htmlFor="staff_position">Job Position</Label>
+                    <select
+                      id="staff_position"
+                      value={staffForm.job_position_code}
+                      onChange={(event) => setStaffForm((current) => ({ ...current, job_position_code: event.target.value as JobPositionCode }))}
+                      className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      {jobPositionCatalog.map((position) => <option key={position.code} value={position.code}>{position.label}</option>)}
+                    </select>
+                    </div>
                   </div>
                   <Button type="submit" disabled={isSaving} className="w-full">
                     {isSaving ? 'Creating account...' : 'Create Staff Account'}
@@ -1170,7 +1189,8 @@ export default function AdminSettingsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
-                        <TableHead>Role</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead>Position</TableHead>
                         <TableHead>Modules</TableHead>
                         <TableHead>Lane</TableHead>
                         <TableHead>Status</TableHead>
@@ -1185,7 +1205,8 @@ export default function AdminSettingsPage() {
                               <p className="text-xs text-muted-foreground">{member.email}</p>
                             </div>
                           </TableCell>
-                          <TableCell>{member.role}</TableCell>
+                          <TableCell>{getDepartmentLabel(member.departments?.code)}</TableCell>
+                          <TableCell>{getJobPositionLabel(member.job_positions?.code)}</TableCell>
                           <TableCell>
                             <p className="text-sm">
                               {(member.allowed_modules?.length ?? 0) > 0
@@ -1219,7 +1240,7 @@ export default function AdminSettingsPage() {
                       ))}
                       {!filteredStaff.length && !isLoading && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground">
+                          <TableCell colSpan={7} className="text-center text-muted-foreground">
                             {staffFilter === 'pending'
                               ? 'No pending staff accounts found.'
                               : staffFilter === 'active'
@@ -1244,7 +1265,7 @@ export default function AdminSettingsPage() {
             <DialogDescription>Update the service details that cashier will use for billing.</DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={handleServiceEditSubmit}>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="edit_service_code">Service Code</Label>
                 <Input id="edit_service_code" value={serviceEditForm.service_code} onChange={(event) => setServiceEditForm((current) => ({ ...current, service_code: event.target.value }))} required />
@@ -1503,8 +1524,16 @@ export default function AdminSettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit_staff_role">Role</Label>
-                <Input id="edit_staff_role" value={staffEditForm.role} disabled />
+                <Label htmlFor="edit_staff_department">Department</Label>
+                <select id="edit_staff_department" value={staffEditForm.department_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, department_code: event.target.value as DepartmentCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  {departmentCatalog.map((department) => <option key={department.code} value={department.code}>{department.label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_staff_position">Job Position</Label>
+                <select id="edit_staff_position" value={staffEditForm.job_position_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, job_position_code: event.target.value as JobPositionCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  {jobPositionCatalog.map((position) => <option key={position.code} value={position.code}>{position.label}</option>)}
+                </select>
               </div>
             </div>
 
@@ -1533,8 +1562,8 @@ export default function AdminSettingsPage() {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {moduleCatalog.map((moduleItem) => {
-                  const stationRole = mapDbRoleToStationRole(staffEditForm.role);
-                  const roleDefaults = stationRole ? getDefaultAllowedModules(stationRole) : [];
+                  const stationRole = getLegacyRoleForAccount(staffEditForm.department_code, staffEditForm.job_position_code).stationRole;
+                  const roleDefaults = getDefaultAllowedModules(stationRole);
                   const isRoleSupported = roleDefaults.includes(moduleItem.href);
 
                   return (

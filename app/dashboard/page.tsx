@@ -33,6 +33,9 @@ import { PageLayout } from '@/components/layout/page-layout';
 import { MetricCard } from '@/components/common/metric-card';
 import { StatusBadge } from '@/components/common/status-badge';
 import { formatCurrency } from '@/lib/formatting';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { readStaffProfile } from '@/lib/station-role';
+import { useRouter } from 'next/navigation';
 
 type DashboardPayload = {
   metrics: {
@@ -85,6 +88,7 @@ const emptyDashboard: DashboardPayload = {
 const serviceColors = ['#0b65b1', '#1f9d8b', '#f59e0b'];
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [dashboard, setDashboard] = useState<DashboardPayload>(emptyDashboard);
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState('');
@@ -94,8 +98,20 @@ export default function DashboardPage() {
 
     const loadDashboard = async () => {
       try {
+        if (readStaffProfile()?.jobPositionCode !== 'administrator') {
+          router.replace('/login');
+          return;
+        }
+        const supabase = getSupabaseBrowserClient();
+        const {
+          data: { session },
+        } = await supabase!.auth.getSession();
+        if (!session?.access_token) {
+          throw new Error('Missing authenticated session.');
+        }
         const response = await fetch('/api/staff/dashboard', {
           cache: 'no-store',
+          headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const payload = (await response.json()) as DashboardPayload & { error?: string };
 
@@ -134,7 +150,7 @@ export default function DashboardPage() {
       isMounted = false;
       window.clearInterval(poll);
     };
-  }, []);
+  }, [router]);
 
   return (
     <PageLayout>

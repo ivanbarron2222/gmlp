@@ -2,10 +2,11 @@
 
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
-import { syncStaffSessionFromSupabase } from '@/lib/station-role';
+import { getStaffHomePath, staffNeedsDailyRole, syncStaffSessionFromSupabase } from '@/lib/station-role';
 
 interface PageLayoutProps {
   children: ReactNode;
@@ -13,6 +14,7 @@ interface PageLayoutProps {
 
 export function PageLayout({ children }: PageLayoutProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -34,7 +36,19 @@ export function PageLayout({ children }: PageLayoutProps) {
       }
 
       try {
-        await syncStaffSessionFromSupabase();
+        const profile = await syncStaffSessionFromSupabase();
+        if (!profile) {
+          router.replace('/login');
+          return;
+        }
+        if (staffNeedsDailyRole(profile)) {
+          router.replace('/staff/select-daily-role');
+          return;
+        }
+        if (profile.jobPositionCode === 'medical_technologist' && profile.activeDailyRole === 'tester' && pathname === '/staff/queue') {
+          router.replace(getStaffHomePath(profile));
+          return;
+        }
         setIsReady(true);
       } catch {
         await supabase.auth.signOut();
@@ -43,7 +57,7 @@ export function PageLayout({ children }: PageLayoutProps) {
     };
 
     void checkSession();
-  }, [router]);
+  }, [pathname, router]);
 
   if (!isReady) {
     return null;

@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card } from '@/components/ui/card';
 import {
-  getRoleHomePath,
+  getStaffHomePath,
   syncStaffSessionFromSupabase,
 } from '@/lib/station-role';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -26,7 +26,7 @@ export default function LoginPage() {
     syncStaffSessionFromSupabase()
       .then((profile) => {
         if (profile) {
-          router.replace(getRoleHomePath(profile.role));
+          router.replace(getStaffHomePath(profile));
         }
       })
       .catch(() => {
@@ -61,7 +61,7 @@ export default function LoginPage() {
         throw new Error('Unable to resolve staff profile for this account.');
       }
 
-      router.push(getRoleHomePath(profile.role));
+      router.push(getStaffHomePath(profile));
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Unable to sign in.');
     } finally {
@@ -147,13 +147,6 @@ export default function LoginPage() {
                 {authError}
               </div>
             )}
-
-            <div className="text-center text-sm text-muted-foreground">
-              Need a staff account?{' '}
-              <Link href="/staff-signup" className="font-medium text-primary hover:underline">
-                Request access
-              </Link>
-            </div>
 
           </form>
 

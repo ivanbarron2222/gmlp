@@ -7,6 +7,8 @@ export interface AdminStaffContext {
   email: string;
   fullName: string;
   role: string;
+  departmentCode: string | null;
+  jobPositionCode: string | null;
   actionPermissions: ActionPermission[];
 }
 
@@ -27,7 +29,7 @@ export async function requireStaffContext(request: Request): Promise<AdminStaffC
 
   const { data: profile, error: profileError } = await supabase
     .from('staff_profiles')
-    .select('id, email, full_name, role, action_permissions')
+    .select('id, email, full_name, role, action_permissions, departments(code), job_positions(code)')
     .eq('id', userData.user.id)
     .single();
 
@@ -35,12 +37,17 @@ export async function requireStaffContext(request: Request): Promise<AdminStaffC
     throw new Error(profileError?.message ?? 'Staff profile not found.');
   }
 
+  const department = Array.isArray(profile.departments) ? profile.departments[0] : profile.departments;
+  const jobPosition = Array.isArray(profile.job_positions) ? profile.job_positions[0] : profile.job_positions;
+
   return {
     supabase,
     userId: String(profile.id),
     email: String(profile.email ?? userData.user.email ?? ''),
     fullName: String(profile.full_name ?? ''),
     role: String(profile.role),
+    departmentCode: department?.code ? String(department.code) : null,
+    jobPositionCode: jobPosition?.code ? String(jobPosition.code) : null,
     actionPermissions: sanitizeActionPermissions(profile.action_permissions),
   };
 }

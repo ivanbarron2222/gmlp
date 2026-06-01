@@ -2,6 +2,7 @@ import { QueueEntry, QueueLane } from '@/lib/queue-store';
 import { sanitizeActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 import { sanitizeAllowedModules, type StaffModulePath } from '@/lib/staff-modules';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { DepartmentCode, JobPositionCode, MedtechDailyRole } from '@/lib/staff-account';
 
 export type StationRole =
   | 'admin'
@@ -34,6 +35,11 @@ export interface StaffProfileSession {
   email: string;
   fullName: string;
   role: StationRole;
+  departmentCode: DepartmentCode | null;
+  departmentName: string;
+  jobPositionCode: JobPositionCode | null;
+  jobPositionName: string;
+  activeDailyRole: MedtechDailyRole | null;
   allowedModules: StaffModulePath[];
   actionPermissions: ActionPermission[];
 }
@@ -164,7 +170,7 @@ export async function syncStaffSessionFromSupabase() {
 
   const { data, error } = await supabase
     .from('staff_profiles')
-    .select('id, email, full_name, role, is_active, allowed_modules, action_permissions')
+    .select('id, email, full_name, role, is_active, allowed_modules, action_permissions, departments(code, name), job_positions(code, name)')
     .eq('id', session.user.id)
     .single();
 
@@ -185,24 +191,45 @@ export async function syncStaffSessionFromSupabase() {
     throw new Error('Your staff account is pending admin activation.');
   }
 
-  writeStationRole(stationRole);
-  writeStaffProfile({
-    id: String(data.id),
-    email: String(data.email ?? session.user.email ?? ''),
-    fullName: String(data.full_name ?? ''),
-    role: stationRole,
-    allowedModules: sanitizeAllowedModules(data.allowed_modules),
-    actionPermissions: sanitizeActionPermissions(data.action_permissions),
-  });
+  const department = Array.isArray(data.departments) ? data.departments[0] : data.departments;
+  const jobPosition = Array.isArray(data.job_positions) ? data.job_positions[0] : data.job_positions;
+  let activeDailyRole: MedtechDailyRole | null = null;
 
-  return {
+  if (jobPosition?.code === 'medical_technologist') {
+    const manilaDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const { data: dailyRole } = await supabase
+      .from('staff_daily_roles')
+      .select('role')
+      .eq('staff_id', data.id)
+      .eq('work_date', manilaDate)
+      .maybeSingle();
+
+    activeDailyRole = (dailyRole?.role as MedtechDailyRole | undefined) ?? null;
+  }
+
+  const profile = {
     id: String(data.id),
     email: String(data.email ?? session.user.email ?? ''),
     fullName: String(data.full_name ?? ''),
     role: stationRole,
+    departmentCode: (department?.code as DepartmentCode | undefined) ?? null,
+    departmentName: String(department?.name ?? ''),
+    jobPositionCode: (jobPosition?.code as JobPositionCode | undefined) ?? null,
+    jobPositionName: String(jobPosition?.name ?? ''),
+    activeDailyRole,
     allowedModules: sanitizeAllowedModules(data.allowed_modules),
     actionPermissions: sanitizeActionPermissions(data.action_permissions),
   } satisfies StaffProfileSession;
+
+  writeStationRole(stationRole);
+  writeStaffProfile(profile);
+
+  return profile;
 }
 
 export function getRoleLane(role: StationRole): QueueLane | null {
@@ -242,6 +269,22 @@ export function getRoleHomePath(role: StationRole) {
     default:
       return '/dashboard';
   }
+}
+
+export function staffNeedsDailyRole(profile: StaffProfileSession) {
+  return profile.jobPositionCode === 'medical_technologist' && !profile.activeDailyRole;
+}
+
+export function getStaffHomePath(profile: StaffProfileSession) {
+  if (staffNeedsDailyRole(profile)) {
+    return '/staff/select-daily-role';
+  }
+
+  if (profile.jobPositionCode === 'medical_technologist') {
+    return profile.activeDailyRole === 'extractor' ? '/staff/queue' : '/staff/patient-records';
+  }
+
+  return getRoleHomePath(profile.role);
 }
 
 export function resolveScanRedirect(role: StationRole, entry: QueueEntry) {

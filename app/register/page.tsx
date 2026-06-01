@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertCircle, CheckCircle2, QrCode } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, QrCode, Upload, X } from 'lucide-react';
 import { useQueuePingSound } from '@/hooks/use-queue-ping-sound';
 import {
   addPendingRegistration,
@@ -125,6 +125,98 @@ export default function PatientRegistrationPage() {
   const [isRequeueing, setIsRequeueing] = useState(false);
   const [queueActionNotice, setQueueActionNotice] = useState('');
   const [submitError, setSubmitError] = useState('');
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState('');
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setIsCameraOpen(false);
+  };
+
+  const clearProfilePhoto = () => {
+    if (profilePhotoPreview) URL.revokeObjectURL(profilePhotoPreview);
+    setProfilePhoto(null);
+    setProfilePhotoPreview('');
+  };
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (profilePhotoPreview) URL.revokeObjectURL(profilePhotoPreview);
+  }, [profilePhotoPreview]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!isCameraOpen || !video || !stream) return;
+
+    video.srcObject = stream;
+    void video.play().catch(() => undefined);
+
+    return () => {
+      if (video.srcObject === stream) video.srcObject = null;
+    };
+  }, [isCameraOpen]);
+
+  const preparePhoto = async (source: Blob) => {
+    const image = document.createElement('img');
+    const sourceUrl = URL.createObjectURL(source);
+    image.src = sourceUrl;
+    await image.decode();
+    const maxSize = 720;
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(sourceUrl);
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Unable to prepare profile photo.')), 'image/jpeg', 0.82)
+    );
+    clearProfilePhoto();
+    const file = new File([blob], `patient-profile-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    setProfilePhoto(file);
+    setProfilePhotoPreview(URL.createObjectURL(file));
+  };
+
+  const startCamera = async () => {
+    try {
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = stream;
+      setIsCameraOpen(true);
+    } catch {
+      setSubmitError('Unable to open the camera. Check browser permission or upload a photo instead.');
+    }
+  };
+
+  const capturePhoto = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Unable to capture profile photo.')), 'image/jpeg', 0.9)
+    );
+    await preparePhoto(blob);
+    stopCamera();
+  };
+
+  const uploadProfilePhoto = async (registration: PendingRegistration) => {
+    if (!profilePhoto) return;
+    const photoForm = new FormData();
+    photoForm.set('registrationCode', registration.registrationCode);
+    photoForm.set('birthDate', registration.birthDate);
+    photoForm.set('photo', profilePhoto);
+    const response = await fetch('/api/public/patient-photo', { method: 'POST', body: photoForm });
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) throw new Error(payload?.error ?? 'Unable to upload patient profile photo.');
+  };
 
   useQueuePingSound({
     queueId: visitStatus?.queue?.id,
@@ -365,6 +457,17 @@ export default function PatientRegistrationPage() {
             : '',
         selectedServiceCodes: formData.selectedServiceCodes,
       } as RegistrationFormInput);
+      try {
+        await uploadProfilePhoto(registration);
+      } catch (error) {
+        setSubmitError(
+          error instanceof Error
+            ? `Registration succeeded, but the profile photo could not be saved: ${error.message}`
+            : 'Registration succeeded, but the profile photo could not be saved.'
+        );
+      }
+      stopCamera();
+      clearProfilePhoto();
       setSubmittedRegistration(registration);
       setVisitStatus(null);
       setLastStatusUpdatedAt(null);
@@ -792,6 +895,66 @@ export default function PatientRegistrationPage() {
                   </svg>
                   Female
                 </button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Patient Profile Photo
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Capture a clear profile photo or upload an existing image.
+                  </p>
+                </div>
+                {profilePhotoPreview && (
+                  <Button type="button" variant="ghost" size="icon" onClick={clearProfilePhoto}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+
+              <div className="mt-4 overflow-hidden rounded-xl border border-dashed border-border bg-background">
+                {isCameraOpen ? (
+                  <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full object-cover" />
+                ) : profilePhotoPreview ? (
+                  <img src={profilePhotoPreview} alt="Patient profile preview" className="aspect-video w-full object-cover" />
+                ) : (
+                  <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">
+                    No profile photo selected.
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {isCameraOpen ? (
+                  <>
+                    <Button type="button" size="sm" onClick={() => void capturePhoto()}>
+                      <Camera className="mr-2 h-4 w-4" /> Capture Photo
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={stopCamera}>
+                      Cancel Camera
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => void startCamera()}>
+                    <Camera className="mr-2 h-4 w-4" /> Open Camera
+                  </Button>
+                )}
+                <label className="inline-flex cursor-pointer items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent">
+                  <Upload className="mr-2 h-4 w-4" /> Upload Photo
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void preparePhoto(file);
+                      event.target.value = '';
+                    }}
+                  />
+                </label>
               </div>
             </div>
 

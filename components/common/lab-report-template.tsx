@@ -79,7 +79,7 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
   const computedAge = computeAgeFromBirthDate(data.patient.birthDate) || data.patient.age || '[AGE]';
 
   return (
-    <div className={cn('lab-report mx-auto w-full max-w-[794px] bg-white font-serif text-slate-900', className)}>
+    <div className={cn('lab-report mx-auto w-full max-w-[1120px] bg-white font-serif text-slate-900', className)}>
       <div className="lab-report__sheet relative overflow-hidden border border-[#cfd8cf]">
         <div className="lab-report__watermark absolute inset-0 flex items-center justify-center opacity-[0.14]">
           <img
@@ -174,72 +174,69 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
             </div>
           </section>
 
-          <section className="lab-report__section-grid mt-4 grid grid-cols-2 border border-slate-700">
-            {data.sections.map((section, index) => (
-              <div
-                key={section.title}
-                className={cn(
-                  'lab-report__panel min-h-[230px]',
-                  index % 2 === 0 ? 'border-r border-slate-700' : '',
-                  index < 2 ? 'border-b border-slate-700' : ''
-                )}
-              >
-                <div className="lab-report__panel-title border-b border-slate-700 px-4 py-1 text-center text-[15px] font-black uppercase leading-none tracking-tight">
-                  {section.title}
-                </div>
-                <table className="lab-report__table w-full border-collapse text-[12px] leading-tight">
-                  <thead>
-                    <tr className="lab-report__table-head border-b border-slate-700">
-                      <th className="lab-report__th border-r border-slate-400 px-1.5 py-0.5 text-left font-bold">Test</th>
-                      <th className="lab-report__th border-r border-slate-400 px-1.5 py-0.5 text-left font-bold">Normal Values</th>
-                      <th className="lab-report__th px-1.5 py-0.5 text-left font-bold">Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {section.rows.length > 0 ? (
-                      section.rows.map((row, index) => (
-                        row.type === 'group' ? (
-                          <tr
-                            key={row.key ?? `${section.title}-${row.test}-${index}`}
-                            className="lab-report__tr align-top last:border-b-0"
-                          >
-                            <td colSpan={3} className="lab-report__td px-1.5 py-1 align-top font-bold">
-                              {row.test}
-                            </td>
-                          </tr>
-                        ) : (
-                          <tr
-                            key={row.key ?? `${section.title}-${row.test}-${index}`}
-                            className="lab-report__tr align-top last:border-b-0"
-                          >
-                            <td className="lab-report__td border-r border-slate-300 px-1.5 py-0.5 align-top font-medium">{row.test}</td>
-                            <td className="lab-report__td border-r border-slate-300 px-1.5 py-0.5 align-top">{row.normalValues || ''}</td>
-                            <td
-                              className={cn(
-                                'lab-report__td px-1.5 py-0.5 align-top font-semibold',
-                                row.flag === 'abnormal' ? 'text-red-700' : 'text-slate-900'
-                              )}
-                            >
-                              {row.result || ''}
-                            </td>
-                          </tr>
-                        )
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={3} className="lab-report__empty px-3 py-8 text-center text-[12px] text-slate-400">
-                          No encoded data
-                        </td>
+          <section className="lab-report__section-grid mt-4 grid grid-cols-1 border border-slate-700 lg:grid-cols-3">
+            <div className="grid lg:col-span-2 lg:grid-cols-2">
+              {data.sections.map((section, index) => (
+                <div
+                  key={section.title}
+                  className={cn(
+                    'lab-report__panel min-h-[190px] border-b border-slate-700',
+                    index % 2 === 0 ? 'lg:border-r lg:border-slate-700' : ''
+                  )}
+                >
+                  <div className="lab-report__panel-title border-b border-slate-700 bg-orange-400 px-4 py-1 text-center text-[15px] font-black uppercase leading-none tracking-tight">
+                    {section.title}
+                  </div>
+                  <table className="lab-report__table w-full border-collapse text-[12px] leading-tight">
+                    <thead>
+                      <tr className="lab-report__table-head border-b border-slate-700">
+                        <th className="lab-report__th border-r border-slate-400 px-1.5 py-0.5 text-left font-bold">Test</th>
+                        <th className="lab-report__th border-r border-slate-400 px-1.5 py-0.5 text-left font-bold">Normal Values</th>
+                        <th className="lab-report__th px-1.5 py-0.5 text-left font-bold">Result</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {section.rows.length > 0 ? (
+                        section.rows.map((row, index) => (
+                          row.type === 'group' ? (
+                            <tr key={row.key ?? `${section.title}-${row.test}-${index}`} className="lab-report__tr align-top last:border-b-0">
+                              <td colSpan={3} className="lab-report__td px-1.5 py-1 align-top font-bold">{row.test}</td>
+                            </tr>
+                          ) : (
+                            <tr key={row.key ?? `${section.title}-${row.test}-${index}`} className="lab-report__tr align-top last:border-b-0">
+                              <td className="lab-report__td border-r border-slate-300 px-1.5 py-0.5 align-top font-medium">{row.test}</td>
+                              <td className="lab-report__td border-r border-slate-300 px-1.5 py-0.5 align-top">{row.normalValues || ''}</td>
+                              <td className={cn('lab-report__td px-1.5 py-0.5 align-top font-semibold', row.flag === 'abnormal' ? 'text-red-700' : 'text-slate-900')}>{row.result || ''}</td>
+                            </tr>
+                          )
+                        ))
+                      ) : (
+                        <tr><td colSpan={3} className="lab-report__empty px-3 py-8 text-center text-[12px] text-slate-400">No encoded data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+            <div className="lab-report__classification min-h-[390px] border-t border-slate-700 p-4 text-[11px] leading-5 lg:border-l lg:border-t-0">
+              <h2 className="text-center text-xl font-black uppercase underline">Medical Classification</h2>
+              <div className="mt-4 space-y-1">
+                <p>( ) <strong>Class A: Fit for employment</strong></p>
+                <p className="pl-5">No defect</p>
+                <p>( ) <strong>Class B: Fit for employment</strong></p>
+                <p className="pl-5">Has correctable defect and offers no handicap to job applied for.</p>
+                <p className="pt-2 font-bold italic">Needs treatment of:</p>
+                {['Mild Anemia / Anemia', 'Mild / Severe Urinary Tract Infection', 'Hematuria', 'Urine Sugar: Trace, +1, +2; Suggest Fasting Blood Sugar', 'Hepa B Reactive; for Internal Medicine consultation', 'External hemorrhoids', 'Dental defects', 'Poor vision', 'Others'].map((item) => <p key={item}>( ) {item}</p>)}
+                <p className="pt-2"><strong>( ) Class C:</strong> For further evaluation of:</p>
+                {['BP Monitoring', 'Hypertensive', 'Low Blood Pressure', 'ECG Findings / Cardiology consultation', 'X-ray Findings consultation', 'PTB: Minimal / Moderate / Extensive', 'Pneumonia', 'Cardiomegaly', 'Others', 'PENDING', 'Suggest Apicolordotic view', 'No Stool Submitted'].map((item) => <p key={item}>( ) {item}</p>)}
+                {data.medicalExam?.diagnosis.map((item) => <p key={`diagnosis-${item}`}>( ) {item}</p>)}
+                {data.medicalExam?.recommendation.map((item) => <p key={`recommendation-${item}`}>( ) {item}</p>)}
               </div>
-            ))}
+            </div>
           </section>
 
-          <footer className="lab-report__footer mt-6 grid gap-10 pt-5 text-center text-[12px] xl:grid-cols-2">
-            {data.signatures.map((signature) => (
+          <footer className="lab-report__footer mt-6 grid gap-10 pt-5 text-center text-[12px] xl:grid-cols-3">
+            {[...data.signatures, ...(data.xraySignature ? [data.xraySignature] : [])].map((signature) => (
               <div key={signature.name} className="lab-report__signature mx-auto w-full max-w-[280px] border-t border-slate-600 pt-3">
                 <p className="lab-report__signature-name font-bold">{signature.name}</p>
                 <p className="lab-report__signature-role">{signature.role}</p>
@@ -247,29 +244,6 @@ export function LabReportTemplate({ data, className }: { data: LabReportTemplate
               </div>
             ))}
           </footer>
-
-          {data.medicalExam && (
-            <section className="lab-report__medical mt-6 border border-slate-400 p-5">
-              <div className="lab-report__medical-grid grid gap-6 xl:grid-cols-2">
-                <div>
-                  <h3 className="lab-report__medical-title text-lg font-black uppercase">Diagnosis</h3>
-                  <ul className="lab-report__medical-list mt-3 space-y-2 text-sm leading-6">
-                    {data.medicalExam.diagnosis.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h3 className="lab-report__medical-title text-lg font-black uppercase">Recommendation</h3>
-                  <ul className="lab-report__medical-list mt-3 space-y-2 text-sm leading-6">
-                    {data.medicalExam.recommendation.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </section>
-          )}
 
         </div>
       </div>

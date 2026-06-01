@@ -152,7 +152,14 @@ Routes:
 - `/login`
 - `/staff-signup`
 
-Staff members authenticate through Supabase Auth. New staff can request accounts through the signup page, while administrators manage activation, role assignment, allowed modules, and action permissions.
+Staff members authenticate through Supabase Auth. Staff accounts are created by administrators and assigned to a department and job position. Administrators manage activation, allowed modules, and action permissions.
+
+Medical Technologists select a daily operational assignment after login:
+
+- `extractor` for blood extraction queue handling
+- `tester` for CBC and urinalysis result work
+
+The assignment is stored by Manila calendar date and selected again on the next work day.
 
 Inactive staff accounts are blocked from staff modules until approved.
 
@@ -166,6 +173,7 @@ The patient registration module allows staff to:
 - Encode walk-in registrations
 - Match returning patients based on name, birth date, contact number, or email
 - Create or update patient records
+- Capture or upload a private patient profile photo during front desk registration
 - Assign service type and laboratory services
 - Assign doctors for check-up patients
 - Generate the official visit and queue entry
@@ -518,7 +526,6 @@ Priority patients are shown separately in the staff queue and are prioritized in
 | Public Report View | `/report/[queueId]` | Released report viewing |
 | Queue Scan Resolver | `/scan/queue/[id]` | QR-based queue or visit resolver |
 | Staff Login | `/login` | Staff authentication |
-| Staff Signup | `/staff-signup` | Staff account request |
 | Dashboard | `/dashboard` | Operational analytics |
 | Patient Registration Staff Module | `/staff/patient-registration` | Verification, walk-in encoding, doctor assignment, queue creation |
 | Queue Management | `/staff/queue` | Live queue control and station routing |
@@ -528,6 +535,7 @@ Priority patients are shown separately in the staff queue and are prioritized in
 | Result Encoding | `/staff/result-encoding` | Doctor and result encoding workflow |
 | Cashier | `/staff/cashier` | Billing, invoices, and payments |
 | Patient Records | `/staff/patient-records` | Patient history and visit records |
+| Patient Profile | `/staff/patients/[patientId]` | Department-filtered examination tabs and repeat tests |
 | Result Release | `/staff/result-release` | Report validation, release, PDF generation |
 | Settings | `/staff/settings` | Service, company, staff, role, and permission management |
 | Activity Log | `/staff/activity-log` | Operational audit timeline |
@@ -564,6 +572,7 @@ Priority patients are shown separately in the staff queue and are prioritized in
 | `/api/staff/result-release/email` | Send released report email |
 | `/api/staff/report-download` | Generate signed staff download URL for released reports |
 | `/api/staff/patient-records` | Load patient and visit records |
+| `/api/staff/patients/[patientId]` | Load a filtered patient profile and save repeat examination instances |
 | `/api/staff/dashboard` | Load dashboard analytics |
 | `/api/staff/activity-log` | Load operational activity timeline |
 | `/api/staff/service-catalog` | Load staff service catalog |
@@ -573,7 +582,8 @@ Priority patients are shown separately in the staff queue and are prioritized in
 | `/api/staff/appointments` | Manage appointment records |
 | `/api/staff/inventory` | Manage inventory-related records |
 | `/api/staff/exceptions` | Manage operational exceptions |
-| `/api/staff/self-register` | Staff-assisted registration support |
+| `/api/staff/daily-role` | Save the Medical Technologist daily assignment |
+| `/api/staff/patient-photo` | Upload a private patient profile photo |
 
 ---
 

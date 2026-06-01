@@ -29,6 +29,7 @@ import {
 import { getDefaultAllowedModules } from '@/lib/staff-modules';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
+import type { JobPositionCode, MedtechDailyRole } from '@/lib/staff-account';
 
 const navItems = [
   {
@@ -99,6 +100,8 @@ export function Sidebar() {
   const [stationRole, setStationRole] = useState<StationRole | null>(null);
   const [staffName, setStaffName] = useState('');
   const [allowedModules, setAllowedModules] = useState<string[]>([]);
+  const [jobPositionCode, setJobPositionCode] = useState<JobPositionCode | null>(null);
+  const [activeDailyRole, setActiveDailyRole] = useState<MedtechDailyRole | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
@@ -107,6 +110,8 @@ export function Sidebar() {
     setStationRole(storedRole);
     setStaffName(storedProfile?.fullName ?? '');
     setAllowedModules(storedProfile?.allowedModules ?? []);
+    setJobPositionCode(storedProfile?.jobPositionCode ?? null);
+    setActiveDailyRole(storedProfile?.activeDailyRole ?? null);
     setIsHydrated(true);
 
     syncStaffSessionFromSupabase()
@@ -115,6 +120,8 @@ export function Sidebar() {
           setStationRole(profile.role);
           setStaffName(profile.fullName);
           setAllowedModules(profile.allowedModules ?? []);
+          setJobPositionCode(profile.jobPositionCode);
+          setActiveDailyRole(profile.activeDailyRole);
         }
       })
       .catch(() => {
@@ -137,12 +144,22 @@ export function Sidebar() {
         ? allowedModules.filter((href) => baseAllowed.has(href as never))
         : Array.from(baseAllowed);
 
+    if (jobPositionCode === 'medical_technologist') {
+      if (activeDailyRole === 'extractor') {
+        return navItems.filter((item) => item.href === '/staff/queue');
+      }
+
+      if (activeDailyRole === 'tester') {
+        return navItems.filter((item) => item.href === '/staff/patient-records' || item.href === '/staff/lab-orders');
+      }
+    }
+
     if (stationRole === 'nurse' && !effectiveAllowed.includes('/staff/doctors')) {
       effectiveAllowed.push('/staff/doctors');
     }
 
     return navItems.filter((item) => effectiveAllowed.includes(item.href));
-  }, [allowedModules, isHydrated, stationRole]);
+  }, [activeDailyRole, allowedModules, isHydrated, jobPositionCode, stationRole]);
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -151,6 +168,8 @@ export function Sidebar() {
     setStationRole(null);
     setStaffName('');
     setAllowedModules([]);
+    setJobPositionCode(null);
+    setActiveDailyRole(null);
     router.push('/login');
   };
 
