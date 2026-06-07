@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
+import { ApeModeBanner } from './ape-mode-banner';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { getStaffHomePath, staffNeedsDailyRole, syncStaffSessionFromSupabase } from '@/lib/station-role';
 
@@ -69,6 +70,7 @@ export function PageLayout({ children }: PageLayoutProps) {
       <div className="flex-1 ml-56">
         <Topbar />
         <main className="pt-16 pb-8">
+          <ApeModeBanner />
           {children}
         </main>
       </div>

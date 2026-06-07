@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { findMatchingPatient, getDoctorAssignmentSuggestion } from '@/lib/doctor-assignment';
+import { getActiveVisitContext, toPatientContextPayload, toVisitContextPayload, type ActiveVisitContext } from '@/lib/visit-context';
 
 type ServiceNeeded = 'Pre-Employment' | 'Check-Up' | 'Lab';
 type RequestedLabService = 'Blood Test' | 'Drug Test' | 'Xray' | 'ECG' | '';
@@ -435,7 +436,8 @@ async function assertNoActiveVisitToday(
 
 async function findOrCreatePatient(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
-  formData: VerifyRegistrationRequest['formData']
+  formData: VerifyRegistrationRequest['formData'],
+  visitContext: ActiveVisitContext
 ) {
   const matchedPatient = await findMatchingPatient(supabase, {
     firstName: formData.firstName,
@@ -474,6 +476,7 @@ async function findOrCreatePatient(
         city: formData.city || null,
         province: formData.province || null,
         notes: formData.notes || null,
+        last_modified_at: new Date().toISOString(),
       })
       .eq('id', existingPatient.id)
       .select()
@@ -502,6 +505,7 @@ async function findOrCreatePatient(
       city: formData.city || null,
       province: formData.province || null,
       notes: formData.notes || null,
+      ...toPatientContextPayload(visitContext),
     })
     .select()
     .single();
@@ -518,6 +522,8 @@ export async function POST(request: Request) {
     const body = (await request.json()) as VerifyRegistrationRequest;
     const { registrationId, formData } = body;
     const supabase = getSupabaseAdminClient();
+    const visitContext = await getActiveVisitContext(supabase);
+    const visitContextPayload = toVisitContextPayload(visitContext);
     let assignedDoctorId = formData.assignedDoctorId || null;
 
     await assertPendingRegistrationIsOpen(supabase, registrationId);
@@ -534,7 +540,7 @@ export async function POST(request: Request) {
       assignedDoctorId = assignment.preferredDoctorId;
     }
 
-    const patient = await findOrCreatePatient(supabase, formData);
+    const patient = await findOrCreatePatient(supabase, formData, visitContext);
     await assertNoActiveVisitToday(supabase, String(patient.id));
     const selectedLabServices = await resolveSelectedLabServices(supabase, formData);
     const requestedServiceCodes = selectedLabServices.map((service) => service.serviceCode);
@@ -556,6 +562,7 @@ export async function POST(request: Request) {
         requested_service_codes: requestedServiceCodes,
         current_lane: 'general',
         notes: formData.notes || null,
+        ...visitContextPayload,
       })
       .select()
       .single();
@@ -578,6 +585,7 @@ export async function POST(request: Request) {
         queue_status: 'waiting',
         counter_name: 'General Intake',
         priority_lane: false,
+        ...visitContextPayload,
       })
       .select()
       .single();
@@ -593,6 +601,7 @@ export async function POST(request: Request) {
         lane: step.lane,
         sort_order: step.sort_order,
         is_required: step.is_required,
+        ...visitContextPayload,
       })
     );
 
@@ -608,6 +617,7 @@ export async function POST(request: Request) {
         queue_entry_id: queueEntry.id,
         doctor_directory_id: assignedDoctorId,
         status: 'pending',
+        ...visitContextPayload,
       });
 
       if (consultationError) {
@@ -632,6 +642,7 @@ export async function POST(request: Request) {
               ? 'system_pre_employment'
               : 'direct_lab',
           status: 'ordered',
+          ...visitContextPayload,
         })
         .select()
         .single();
@@ -675,6 +686,7 @@ export async function POST(request: Request) {
             test_code: item.test_code,
             test_name: item.test_name,
             sample_id: createCode(`SMP${index + 1}`),
+            ...visitContextPayload,
           }))
       );
 
@@ -690,6 +702,7 @@ export async function POST(request: Request) {
           patient_id: patient.id,
           status: 'verified',
           verified_at: new Date().toISOString(),
+          ...visitContextPayload,
         })
         .eq('id', registrationId);
 

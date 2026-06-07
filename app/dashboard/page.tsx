@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Activity,
   CheckCircle2,
+  Clock,
   CreditCard,
   DollarSign,
   Eye,
@@ -43,6 +45,38 @@ type DashboardPayload = {
     pendingTests: number;
     releasedResults: number;
     revenueToday: number;
+    averageQueueWaitMinutes: number;
+    averageProcessingMinutes: number;
+    longestActiveWaitMinutes: number;
+    completedStationsToday: number;
+  };
+  proofMetrics: {
+    averageQueueWaitMinutes: number;
+    averageProcessingMinutes: number;
+    longestActiveWaitMinutes: number;
+    completedStationsToday: number;
+    opdVisitsToday: number;
+    apeVisitsToday: number;
+  };
+  stationBottlenecks: Array<{
+    lane: string;
+    label: string;
+    pending: number;
+    serving: number;
+    completed: number;
+    averageWaitMinutes: number;
+    averageProcessingMinutes: number;
+    workloadScore: number;
+  }>;
+  contextBreakdown: {
+    opd: number;
+    ape: number;
+  };
+  syncSummary: {
+    pending: number;
+    conflicts: number;
+    failed: number;
+    totalUnsynced: number;
   };
   patientFlow: Array<{ time: string; count: number }>;
   serviceBreakdown: Array<{ service: string; count: number }>;
@@ -76,6 +110,29 @@ const emptyDashboard: DashboardPayload = {
     pendingTests: 0,
     releasedResults: 0,
     revenueToday: 0,
+    averageQueueWaitMinutes: 0,
+    averageProcessingMinutes: 0,
+    longestActiveWaitMinutes: 0,
+    completedStationsToday: 0,
+  },
+  proofMetrics: {
+    averageQueueWaitMinutes: 0,
+    averageProcessingMinutes: 0,
+    longestActiveWaitMinutes: 0,
+    completedStationsToday: 0,
+    opdVisitsToday: 0,
+    apeVisitsToday: 0,
+  },
+  stationBottlenecks: [],
+  contextBreakdown: {
+    opd: 0,
+    ape: 0,
+  },
+  syncSummary: {
+    pending: 0,
+    conflicts: 0,
+    failed: 0,
+    totalUnsynced: 0,
   },
   patientFlow: [],
   serviceBreakdown: [],
@@ -207,6 +264,92 @@ export default function DashboardPage() {
             icon={<DollarSign className="h-5 w-5 text-primary" />}
           />
         </div>
+
+        <Card className="mb-8 overflow-hidden border-primary/10 shadow-sm">
+          <div className="border-b bg-gradient-to-r from-primary/10 via-white to-amber-50 px-6 py-5">
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">
+              Efficiency Proof
+            </p>
+            <h2 className="mt-2 text-2xl font-bold">Why the clinic needs the system</h2>
+            <p className="mt-2 max-w-4xl text-sm text-muted-foreground">
+              These metrics are generated from queue timestamps, result activity, OPD/APE tagging, and sync status.
+              They can be used to prove faster monitoring, clearer accountability, and better mission support.
+            </p>
+          </div>
+          <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border bg-background p-4">
+              <div className="flex items-center gap-2 text-primary">
+                <Clock className="h-4 w-4" />
+                <p className="text-xs font-bold uppercase tracking-wide">Avg Queue Wait</p>
+              </div>
+              <p className="mt-3 text-3xl font-black">{dashboard.proofMetrics.averageQueueWaitMinutes}</p>
+              <p className="mt-1 text-sm text-muted-foreground">minutes before staff starts a station step</p>
+            </div>
+            <div className="rounded-2xl border bg-background p-4">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <Activity className="h-4 w-4" />
+                <p className="text-xs font-bold uppercase tracking-wide">Avg Processing</p>
+              </div>
+              <p className="mt-3 text-3xl font-black">{dashboard.proofMetrics.averageProcessingMinutes}</p>
+              <p className="mt-1 text-sm text-muted-foreground">minutes from station start to completion</p>
+            </div>
+            <div className="rounded-2xl border bg-background p-4">
+              <div className="flex items-center gap-2 text-amber-700">
+                <AlertTriangle className="h-4 w-4" />
+                <p className="text-xs font-bold uppercase tracking-wide">Longest Active Wait</p>
+              </div>
+              <p className="mt-3 text-3xl font-black">{dashboard.proofMetrics.longestActiveWaitMinutes}</p>
+              <p className="mt-1 text-sm text-muted-foreground">minutes for the oldest pending/serving step</p>
+            </div>
+            <div className="rounded-2xl border bg-background p-4">
+              <div className="flex items-center gap-2 text-sky-700">
+                <CheckCircle2 className="h-4 w-4" />
+                <p className="text-xs font-bold uppercase tracking-wide">Completed Steps</p>
+              </div>
+              <p className="mt-3 text-3xl font-black">{dashboard.proofMetrics.completedStationsToday}</p>
+              <p className="mt-1 text-sm text-muted-foreground">station tasks completed today</p>
+            </div>
+          </div>
+          <div className="grid gap-4 border-t bg-muted/20 p-6 lg:grid-cols-3">
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">OPD / APE Split</p>
+              <div className="mt-3 flex items-end gap-6">
+                <div>
+                  <p className="text-3xl font-black">{dashboard.contextBreakdown.opd}</p>
+                  <p className="text-sm text-muted-foreground">OPD walk-ins</p>
+                </div>
+                <div>
+                  <p className="text-3xl font-black text-amber-700">{dashboard.contextBreakdown.ape}</p>
+                  <p className="text-sm text-muted-foreground">APE mission visits</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Offline Sync Watch</p>
+              <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <p className="text-2xl font-black">{dashboard.syncSummary.pending}</p>
+                  <p className="text-xs text-muted-foreground">Pending</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-black">{dashboard.syncSummary.conflicts}</p>
+                  <p className="text-xs text-muted-foreground">Conflicts</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-black">{dashboard.syncSummary.failed}</p>
+                  <p className="text-xs text-muted-foreground">Failed</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Proof Statement</p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                The dashboard now measures patient volume, station throughput, waiting time, OPD/APE separation,
+                and sync risk in one place.
+              </p>
+            </div>
+          </div>
+        </Card>
 
         <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Link href="/staff/patient-registration">
@@ -470,6 +613,48 @@ export default function DashboardPage() {
               <Button asChild variant="outline" className="mt-4 w-full">
                 <Link href="/staff/queue">Manage Full Queue</Link>
               </Button>
+            </Card>
+
+            <Card className="p-6 shadow-sm">
+              <div className="mb-6">
+                <h2 className="text-lg font-bold">Station Bottlenecks</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Ranked by pending workload and waiting time.
+                </p>
+              </div>
+              <div className="space-y-3">
+                {dashboard.stationBottlenecks.length > 0 ? (
+                  dashboard.stationBottlenecks.map((station, index) => (
+                    <div key={`${station.lane}-${index}`} className="rounded-xl border bg-muted/20 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{station.label}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {station.pending} pending | {station.serving} serving | {station.completed} completed
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-black text-primary">
+                          #{index + 1}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-lg bg-white p-2">
+                          <p className="text-xs text-muted-foreground">Avg Wait</p>
+                          <p className="font-bold">{station.averageWaitMinutes} min</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-2">
+                          <p className="text-xs text-muted-foreground">Avg Process</p>
+                          <p className="font-bold">{station.averageProcessingMinutes} min</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                    {isLoading ? 'Loading station workload...' : 'No station bottleneck data yet.'}
+                  </div>
+                )}
+              </div>
             </Card>
 
             <Card className="p-6 shadow-sm">

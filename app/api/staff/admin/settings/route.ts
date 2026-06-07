@@ -8,6 +8,7 @@ import {
   type DepartmentCode,
   type JobPositionCode,
 } from '@/lib/staff-account';
+import { getActiveVisitContext } from '@/lib/visit-context';
 
 type StaffRoleDb =
   | 'admin'
@@ -51,6 +52,24 @@ function isMissingPackageAmountColumn(error: unknown) {
   return (
     (maybeError.code === '42703' || maybeError.code === 'PGRST204') &&
     message.includes('amount')
+  );
+}
+
+function isMissingApeSchema(error: unknown) {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string; details?: string; hint?: string };
+  const text = `${maybeError.message ?? ''} ${maybeError.details ?? ''} ${maybeError.hint ?? ''}`.toLowerCase();
+
+  return (
+    maybeError.code === '42P01' ||
+    maybeError.code === '42703' ||
+    maybeError.code === 'PGRST204' ||
+    text.includes('ape_events') ||
+    text.includes('clinic_runtime_settings') ||
+    text.includes('sync_status')
   );
 }
 
@@ -212,6 +231,51 @@ export async function GET(request: Request) {
       packagePriceByCompanyId.set(companyId, current);
     }
 
+    let apeEvents: unknown[] = [];
+    let apeRuntime = {
+      apeModeEnabled: false,
+      activeApeEventId: null as string | null,
+      activeApeEvent: null as unknown,
+      syncSummary: {
+        pendingCount: 0,
+        conflictCount: 0,
+        failedCount: 0,
+        status: 'not_configured',
+      },
+    };
+
+    const { data: apeEventRows, error: apeEventsError } = await supabase
+      .from('ape_events')
+      .select('id, ape_code, name, location, start_date, end_date, status, created_at, updated_at')
+      .order('start_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (apeEventsError) {
+      if (!isMissingApeSchema(apeEventsError)) {
+        throw new Error(apeEventsError.message);
+      }
+    } else {
+      apeEvents = apeEventRows ?? [];
+      const activeContext = await getActiveVisitContext(supabase);
+      const [{ count: pendingCount }, { count: conflictCount }, { count: failedCount }] = await Promise.all([
+        supabase.from('visits').select('id', { count: 'exact', head: true }).eq('sync_status', 'local_pending'),
+        supabase.from('visits').select('id', { count: 'exact', head: true }).eq('sync_status', 'conflict'),
+        supabase.from('visits').select('id', { count: 'exact', head: true }).eq('sync_status', 'failed'),
+      ]);
+
+      apeRuntime = {
+        apeModeEnabled: activeContext.apeModeEnabled,
+        activeApeEventId: activeContext.apeEventId,
+        activeApeEvent: activeContext.apeEvent,
+        syncSummary: {
+          pendingCount: pendingCount ?? 0,
+          conflictCount: conflictCount ?? 0,
+          failedCount: failedCount ?? 0,
+          status: 'not_configured',
+        },
+      };
+    }
+
     return NextResponse.json({
       services: serviceRows,
       companies: (companies ?? []).map((company) => ({
@@ -229,6 +293,8 @@ export async function GET(request: Request) {
       staff: staff ?? [],
       inventory: inventory ?? [],
       retentionPolicies: retentionPolicies ?? [],
+      apeEvents,
+      apeRuntime,
       packageAmountsAvailable,
       healthSummary: {
         reportRevisionCount: reportRevisionCount ?? 0,
@@ -327,7 +393,141 @@ export async function POST(request: Request) {
             protected_delete?: boolean;
             notes?: string;
           };
+        }
+      | {
+          kind: 'ape_event';
+          apeEvent?: {
+            id?: string;
+            ape_code: string;
+            name: string;
+            location?: string;
+            start_date: string;
+            end_date?: string | null;
+            status?: 'planned' | 'active' | 'completed' | 'cancelled';
+          };
+        }
+      | {
+          kind: 'ape_mode';
+          action?: 'start' | 'end';
+          apeEventId?: string | null;
+        }
+      | {
+          kind: 'ape_sync';
+          apeEventId?: string | null;
         };
+
+    if (body.kind === 'ape_event') {
+      const apeEvent = body.apeEvent;
+      if (!apeEvent?.ape_code?.trim() || !apeEvent.name?.trim() || !apeEvent.start_date) {
+        return NextResponse.json({ error: 'Missing APE event fields.' }, { status: 400 });
+      }
+
+      const payload = {
+        ape_code: apeEvent.ape_code.trim(),
+        name: apeEvent.name.trim(),
+        location: apeEvent.location?.trim() || null,
+        start_date: apeEvent.start_date,
+        end_date: apeEvent.end_date || null,
+        status: apeEvent.status ?? 'planned',
+        created_by: userId,
+      };
+
+      const query = apeEvent.id
+        ? supabase.from('ape_events').update(payload).eq('id', apeEvent.id).select().single()
+        : supabase.from('ape_events').insert(payload).select().single();
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      return NextResponse.json({ apeEvent: data });
+    }
+
+    if (body.kind === 'ape_mode') {
+      if (body.action === 'start') {
+        if (!body.apeEventId) {
+          return NextResponse.json({ error: 'Select an APE event before starting APE mode.' }, { status: 400 });
+        }
+
+        const [{ error: eventError }, { data: runtime, error: runtimeError }] = await Promise.all([
+          supabase
+            .from('ape_events')
+            .update({ status: 'active' })
+            .eq('id', body.apeEventId)
+            .select('id')
+            .single(),
+          supabase
+            .from('clinic_runtime_settings')
+            .upsert({
+              id: true,
+              ape_mode_enabled: true,
+              active_ape_event_id: body.apeEventId,
+              updated_by: userId,
+            })
+            .select()
+            .single(),
+        ]);
+
+        if (eventError) throw new Error(eventError.message);
+        if (runtimeError) throw new Error(runtimeError.message);
+
+        return NextResponse.json({ runtime });
+      }
+
+      if (body.action === 'end') {
+        const activeContext = await getActiveVisitContext(supabase);
+        const { data: runtime, error: runtimeError } = await supabase
+          .from('clinic_runtime_settings')
+          .upsert({
+            id: true,
+            ape_mode_enabled: false,
+            active_ape_event_id: null,
+            updated_by: userId,
+          })
+          .select()
+          .single();
+
+        if (runtimeError) throw new Error(runtimeError.message);
+
+        if (activeContext.apeEventId) {
+          const { error: eventError } = await supabase
+            .from('ape_events')
+            .update({ status: 'completed' })
+            .eq('id', activeContext.apeEventId);
+
+          if (eventError) throw new Error(eventError.message);
+        }
+
+        return NextResponse.json({ runtime });
+      }
+
+      return NextResponse.json({ error: 'Unsupported APE mode action.' }, { status: 400 });
+    }
+
+    if (body.kind === 'ape_sync') {
+      const activeContext = await getActiveVisitContext(supabase);
+      const targetApeEventId = body.apeEventId ?? activeContext.apeEventId;
+
+      let query = supabase
+        .from('visits')
+        .select('id', { count: 'exact', head: true })
+        .in('sync_status', ['local_pending', 'conflict', 'failed']);
+
+      if (targetApeEventId) {
+        query = query.eq('ape_event_id', targetApeEventId);
+      }
+
+      const { count, error } = await query;
+      if (error) throw new Error(error.message);
+
+      return NextResponse.json({
+        sync: {
+          status: 'not_configured',
+          pendingCount: count ?? 0,
+          message:
+            'Sync button is ready in the UI, but local-to-cloud transport is not connected yet. This first phase only tags OPD/APE records and summarizes pending sync data.',
+        },
+      });
+    }
 
     if (body.kind === 'service') {
       const service = body.service;

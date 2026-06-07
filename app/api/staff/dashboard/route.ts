@@ -4,6 +4,41 @@ import { requireAdminStaffAccess } from '@/lib/supabase/admin-auth';
 type DbServiceType = 'pre_employment' | 'check_up' | 'lab';
 type DbReportStatus = 'draft' | 'validated' | 'released';
 
+type QueueLane =
+  | 'general'
+  | 'priority_lane'
+  | 'blood_test'
+  | 'drug_test'
+  | 'doctor'
+  | 'xray'
+  | 'ecg';
+
+function minutesBetween(start?: string | null, end?: string | null) {
+  if (!start || !end) {
+    return null;
+  }
+
+  const startTime = new Date(start).getTime();
+  const endTime = new Date(end).getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) {
+    return null;
+  }
+
+  return Math.round((endTime - startTime) / 60000);
+}
+
+function average(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function formatLaneLabel(lane: string) {
+  return lane.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function getManilaDayRange() {
   const now = new Date();
   const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -74,6 +109,10 @@ export async function GET(request: Request) {
       liveQueueResponse,
       visitsLast7Response,
       reportsPendingResponse,
+      queueStepsTodayResponse,
+      activeQueueStepsResponse,
+      contextTodayResponse,
+      syncStatusResponse,
     ] = await Promise.all([
       supabase
         .from('visits')
@@ -133,6 +172,25 @@ export async function GET(request: Request) {
         .in('status', ['draft', 'validated'])
         .order('created_at', { ascending: false })
         .limit(6),
+      supabase
+        .from('queue_steps')
+        .select('id, lane, status, started_at, completed_at, created_at')
+        .gte('created_at', startIso)
+        .lt('created_at', endIso),
+      supabase
+        .from('queue_steps')
+        .select('id, lane, status, created_at, started_at')
+        .in('status', ['pending', 'serving'])
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('visits')
+        .select('id, visit_context, ape_event_id')
+        .gte('created_at', startIso)
+        .lt('created_at', endIso),
+      supabase
+        .from('visits')
+        .select('id, sync_status')
+        .neq('sync_status', 'synced'),
     ]);
 
     for (const response of [
@@ -144,6 +202,10 @@ export async function GET(request: Request) {
       liveQueueResponse,
       visitsLast7Response,
       reportsPendingResponse,
+      queueStepsTodayResponse,
+      activeQueueStepsResponse,
+      contextTodayResponse,
+      syncStatusResponse,
     ]) {
       if (response.error) {
         throw new Error(response.error.message);
@@ -158,6 +220,101 @@ export async function GET(request: Request) {
     const liveQueue = liveQueueResponse.data ?? [];
     const visitsLast7 = visitsLast7Response.data ?? [];
     const reportsPending = reportsPendingResponse.data ?? [];
+    const queueStepsToday = queueStepsTodayResponse.data ?? [];
+    const activeQueueSteps = activeQueueStepsResponse.data ?? [];
+    const contextToday = contextTodayResponse.data ?? [];
+    const unsyncedVisits = syncStatusResponse.data ?? [];
+
+    const completedStepMinutes = queueStepsToday
+      .map((step) => minutesBetween(String(step.started_at ?? step.created_at), String(step.completed_at ?? '')))
+      .filter((value): value is number => value !== null);
+    const queueWaitMinutes = queueStepsToday
+      .map((step) => minutesBetween(String(step.created_at), String(step.started_at ?? '')))
+      .filter((value): value is number => value !== null);
+    const activeWaitMinutes = activeQueueSteps
+      .map((step) => minutesBetween(String(step.created_at), new Date().toISOString()))
+      .filter((value): value is number => value !== null);
+
+    const stationMap = new Map<
+      string,
+      {
+        lane: string;
+        pending: number;
+        serving: number;
+        completed: number;
+        waitMinutes: number[];
+        processMinutes: number[];
+      }
+    >();
+
+    const ensureStation = (lane: string) => {
+      const current = stationMap.get(lane) ?? {
+        lane,
+        pending: 0,
+        serving: 0,
+        completed: 0,
+        waitMinutes: [] as number[],
+        processMinutes: [] as number[],
+      };
+      stationMap.set(lane, current);
+      return current;
+    };
+
+    for (const step of queueStepsToday) {
+      const lane = String(step.lane ?? 'general');
+      const station = ensureStation(lane);
+      if (step.status === 'completed') {
+        station.completed += 1;
+      }
+      const wait = minutesBetween(String(step.created_at), String(step.started_at ?? ''));
+      if (wait !== null) {
+        station.waitMinutes.push(wait);
+      }
+      const process = minutesBetween(String(step.started_at ?? step.created_at), String(step.completed_at ?? ''));
+      if (process !== null) {
+        station.processMinutes.push(process);
+      }
+    }
+
+    for (const step of activeQueueSteps) {
+      const lane = String(step.lane ?? 'general');
+      const station = ensureStation(lane);
+      if (step.status === 'serving') {
+        station.serving += 1;
+      } else {
+        station.pending += 1;
+      }
+      const wait = minutesBetween(String(step.created_at), new Date().toISOString());
+      if (wait !== null) {
+        station.waitMinutes.push(wait);
+      }
+    }
+
+    const stationBottlenecks = Array.from(stationMap.values())
+      .map((station) => ({
+        lane: station.lane,
+        label: formatLaneLabel(station.lane),
+        pending: station.pending,
+        serving: station.serving,
+        completed: station.completed,
+        averageWaitMinutes: average(station.waitMinutes),
+        averageProcessingMinutes: average(station.processMinutes),
+        workloadScore: station.pending * 3 + station.serving * 2 + average(station.waitMinutes),
+      }))
+      .sort((left, right) => right.workloadScore - left.workloadScore)
+      .slice(0, 5);
+
+    const contextBreakdown = {
+      opd: contextToday.filter((visit) => visit.visit_context !== 'ape').length,
+      ape: contextToday.filter((visit) => visit.visit_context === 'ape').length,
+    };
+
+    const syncSummary = {
+      pending: unsyncedVisits.filter((visit) => visit.sync_status === 'local_pending').length,
+      conflicts: unsyncedVisits.filter((visit) => visit.sync_status === 'conflict').length,
+      failed: unsyncedVisits.filter((visit) => visit.sync_status === 'failed').length,
+      totalUnsynced: unsyncedVisits.length,
+    };
 
     const patientFlowBuckets = Array.from({ length: 8 }, (_, index) => ({
       time: formatBucketLabel(6 + index * 2),
@@ -243,7 +400,22 @@ export async function GET(request: Request) {
           const amount = Number(row.amount ?? 0);
           return Number.isFinite(amount) ? sum + amount : sum;
         }, 0),
+        averageQueueWaitMinutes: average(queueWaitMinutes),
+        averageProcessingMinutes: average(completedStepMinutes),
+        longestActiveWaitMinutes: activeWaitMinutes.length > 0 ? Math.max(...activeWaitMinutes) : 0,
+        completedStationsToday: queueStepsToday.filter((step) => step.status === 'completed').length,
       },
+      proofMetrics: {
+        averageQueueWaitMinutes: average(queueWaitMinutes),
+        averageProcessingMinutes: average(completedStepMinutes),
+        longestActiveWaitMinutes: activeWaitMinutes.length > 0 ? Math.max(...activeWaitMinutes) : 0,
+        completedStationsToday: queueStepsToday.filter((step) => step.status === 'completed').length,
+        opdVisitsToday: contextBreakdown.opd,
+        apeVisitsToday: contextBreakdown.ape,
+      },
+      stationBottlenecks,
+      contextBreakdown,
+      syncSummary,
       patientFlow: patientFlowBuckets,
       serviceBreakdown: Array.from(serviceBreakdownMap.entries()).map(([service, count]) => ({
         service,

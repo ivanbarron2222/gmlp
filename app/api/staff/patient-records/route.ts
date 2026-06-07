@@ -43,6 +43,9 @@ type VisitRow = {
   status: 'active' | 'completed' | 'cancelled';
   current_lane: DbQueueLane;
   notes: string | null;
+  visit_context?: 'opd' | 'ape' | null;
+  ape_event_id?: string | null;
+  ape_events?: { name?: string | null; ape_code?: string | null } | null;
   created_at: string;
   updated_at: string;
 };
@@ -231,6 +234,12 @@ export async function GET(request: Request) {
         status,
         current_lane,
         notes,
+        visit_context,
+        ape_event_id,
+        ape_events (
+          name,
+          ape_code
+        ),
         created_at,
         updated_at
       `)
@@ -536,6 +545,8 @@ export async function GET(request: Request) {
             queueEntryId: queueEntry?.id ?? '',
             queueNumber: queueEntry?.queue_number ?? 'Unassigned',
             labNumbers,
+            visitContext: visit.visit_context === 'ape' ? 'ape' : 'opd',
+            apeEventName: visit.ape_events?.name ?? visit.ape_events?.ape_code ?? '',
             patientName: [patient.first_name, patient.middle_name ?? '', patient.last_name]
               .filter(Boolean)
               .join(' '),

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireStaffContext, type AdminStaffContext } from '@/lib/supabase/admin-auth';
+import { getActiveVisitContext, toVisitContextPayload } from '@/lib/visit-context';
 
 const allTestTypes = ['physical_exam', 'cbc', 'urinalysis', 'fecalysis', 'serology', 'xray', 'drug_test', 'ecg'] as const;
 type TestType = (typeof allTestTypes)[number];
@@ -32,6 +33,67 @@ async function canEditTestType(context: AdminStaffContext, testType: TestType) {
     .maybeSingle();
 
   return data?.role === 'tester';
+}
+
+function formatTestTypeLabel(testType: TestType) {
+  return testType
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+async function getVisitContextPayload(context: AdminStaffContext, visitId?: string | null) {
+  if (visitId) {
+    const { data } = await context.supabase
+      .from('visits')
+      .select('visit_context, ape_event_id')
+      .eq('id', visitId)
+      .maybeSingle();
+
+    if (data?.visit_context) {
+      return {
+        visit_context: data.visit_context,
+        ape_event_id: data.ape_event_id ?? null,
+        sync_status: 'synced',
+        last_modified_at: new Date().toISOString(),
+      };
+    }
+  }
+
+  return toVisitContextPayload(await getActiveVisitContext(context.supabase));
+}
+
+async function recordResultAuditEvent(
+  context: AdminStaffContext,
+  input: {
+    patientId: string;
+    testInstanceId: string;
+    visitId?: string | null;
+    testType: TestType;
+    status: string;
+    action: 'created' | 'updated';
+  }
+) {
+  const { error } = await context.supabase.from('audit_events').insert({
+    event_type: `patient_result_${input.action}`,
+    entity_type: 'patient_test_instance',
+    entity_id: input.testInstanceId,
+    visit_id: input.visitId ?? null,
+    patient_id: input.patientId,
+    actor_staff_id: context.userId,
+    summary: `${formatTestTypeLabel(input.testType)} result ${input.action}`,
+    detail: `${context.fullName || 'Staff'} saved ${formatTestTypeLabel(input.testType)} as ${input.status}.`,
+    metadata: {
+      testType: input.testType,
+      status: input.status,
+      staffName: context.fullName,
+      jobPositionCode: context.jobPositionCode,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ patientId: string }> }) {
@@ -115,16 +177,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
           status: body.status ?? 'draft',
           encoded_by: context.userId,
           encoded_at: new Date().toISOString(),
+          last_modified_at: new Date().toISOString(),
         })
         .eq('id', body.id)
         .eq('patient_id', patientId)
         .eq('test_type', body.testType)
-        .select()
+        .select('id, visit_id, test_type, status')
         .single();
       if (error) throw new Error(error.message);
+      await recordResultAuditEvent(context, {
+        patientId,
+        testInstanceId: String(data.id),
+        visitId: data.visit_id ? String(data.visit_id) : null,
+        testType: body.testType,
+        status: String(data.status ?? body.status ?? 'draft'),
+        action: 'updated',
+      });
       return NextResponse.json({ testInstance: data });
     }
 
+    const visitContextPayload = await getVisitContextPayload(context, body.visitId);
     const { data: latest } = await context.supabase
       .from('patient_test_instances')
       .select('sequence_number')
@@ -144,10 +216,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
         result_payload: body.resultPayload ?? {},
         encoded_by: context.userId,
         encoded_at: new Date().toISOString(),
+        ...visitContextPayload,
       })
-      .select()
+      .select('id, visit_id, test_type, status')
       .single();
     if (error) throw new Error(error.message);
+    await recordResultAuditEvent(context, {
+      patientId,
+      testInstanceId: String(data.id),
+      visitId: data.visit_id ? String(data.visit_id) : null,
+      testType: body.testType,
+      status: String(data.status ?? 'draft'),
+      action: 'created',
+    });
     return NextResponse.json({ testInstance: data });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unable to save examination result.' }, { status: 500 });

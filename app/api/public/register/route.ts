@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { findMatchingPatient } from '@/lib/doctor-assignment';
+import { getActiveVisitContext, toPatientContextPayload, toVisitContextPayload, type ActiveVisitContext } from '@/lib/visit-context';
 import type { RegistrationFormInput, RegistrationService, RequestedLabService } from '@/lib/registration-store';
 
 type LabLane = 'blood_test' | 'drug_test' | 'xray' | 'ecg';
@@ -423,7 +424,8 @@ function buildPendingLanes(service: RegistrationService, selectedLabServices: Ar
 
 async function findOrCreatePatient(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
-  input: ReturnType<typeof validateRegistration>
+  input: ReturnType<typeof validateRegistration>,
+  visitContext: ActiveVisitContext
 ) {
   const matchedPatient = await findMatchingPatient(supabase, {
     firstName: input.firstName,
@@ -447,6 +449,7 @@ async function findOrCreatePatient(
         city: input.city || null,
         province: input.province || null,
         notes: input.notes || null,
+        last_modified_at: new Date().toISOString(),
       })
       .eq('id', matchedPatient.id)
       .select()
@@ -472,6 +475,7 @@ async function findOrCreatePatient(
       city: input.city || null,
       province: input.province || null,
       notes: input.notes || null,
+      ...toPatientContextPayload(visitContext),
     })
     .select()
     .single();
@@ -484,6 +488,8 @@ export async function POST(request: Request) {
   try {
     const input = validateRegistration((await request.json()) as RegistrationFormInput);
     const supabase = getSupabaseAdminClient();
+    const visitContext = await getActiveVisitContext(supabase);
+    const visitContextPayload = toVisitContextPayload(visitContext);
 
     await assertNoSameDayPendingRegistration(supabase, input);
     await assertNoSameDayActiveVisit(supabase, input);
@@ -508,6 +514,7 @@ export async function POST(request: Request) {
         requested_lab_service: toDbLabService(input.requestedLabService),
         requested_service_codes: input.selectedServiceCodes,
         notes: input.notes || null,
+        ...visitContextPayload,
       })
       .select('id, registration_code, created_at')
       .single();
@@ -516,7 +523,7 @@ export async function POST(request: Request) {
       throw error;
     }
 
-    const patient = await findOrCreatePatient(supabase, input);
+    const patient = await findOrCreatePatient(supabase, input, visitContext);
     const selectedLabServices = await resolveSelectedLabServices(supabase, input);
     const requestedServiceCodes = selectedLabServices.map((service) => service.serviceCode);
     const primaryRequestedLabService =
@@ -534,6 +541,7 @@ export async function POST(request: Request) {
         requested_service_codes: requestedServiceCodes,
         current_lane: 'general',
         notes: input.notes || null,
+        ...visitContextPayload,
       })
       .select()
       .single();
@@ -558,6 +566,7 @@ export async function POST(request: Request) {
         counter_name: 'General Intake',
         priority_lane: false,
         queue_date: manilaDate,
+        ...visitContextPayload,
       })
       .select()
       .single();
@@ -572,6 +581,7 @@ export async function POST(request: Request) {
       lane: step.lane,
       sort_order: step.sort_order,
       is_required: step.is_required,
+      ...visitContextPayload,
     }));
 
     const { error: stepsError } = await supabase.from('queue_steps').insert(queueSteps);
@@ -591,6 +601,7 @@ export async function POST(request: Request) {
           patient_id: patient.id,
           source: input.serviceNeeded === 'Pre-Employment' ? 'system_pre_employment' : 'direct_lab',
           status: 'ordered',
+          ...visitContextPayload,
         })
         .select()
         .single();
@@ -607,6 +618,7 @@ export async function POST(request: Request) {
           test_code: service.testCode,
           test_name: service.testName,
           sample_id: createCode(`SMP${index + 1}`),
+          ...visitContextPayload,
         }))
       );
 
@@ -621,6 +633,7 @@ export async function POST(request: Request) {
         patient_id: patient.id,
         status: 'verified',
         verified_at: new Date().toISOString(),
+        ...visitContextPayload,
       })
       .eq('id', data.id);
 

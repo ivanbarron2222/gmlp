@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Building2, DollarSign, Pencil, ShieldPlus, Stethoscope, Trash2, Users } from 'lucide-react';
+import { Building2, CloudUpload, DollarSign, MapPin, Pencil, PlayCircle, ShieldPlus, Stethoscope, Trash2, Users } from 'lucide-react';
 import { actionPermissionCatalog, getDefaultActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 import { PageLayout } from '@/components/layout/page-layout';
 import { Card } from '@/components/ui/card';
@@ -87,6 +87,36 @@ type DoctorRow = {
   updated_at?: string;
 };
 
+type ApeEventRow = {
+  id: string;
+  ape_code: string;
+  name: string;
+  location?: string | null;
+  start_date: string;
+  end_date?: string | null;
+  status: 'planned' | 'active' | 'completed' | 'cancelled';
+  created_at?: string;
+  updated_at?: string;
+};
+
+type ApeRuntime = {
+  apeModeEnabled: boolean;
+  activeApeEventId: string | null;
+  activeApeEvent: {
+    id: string;
+    apeCode: string;
+    name: string;
+    location: string;
+    status: string;
+  } | null;
+  syncSummary: {
+    pendingCount: number;
+    conflictCount: number;
+    failedCount: number;
+    status: string;
+  };
+};
+
 const initialServiceForm = {
   service_code: '',
   service_name: '',
@@ -120,6 +150,14 @@ const initialStaffForm = {
 
 const initialDoctorForm = {
   full_name: '',
+};
+
+const initialApeEventForm = {
+  ape_code: '',
+  name: '',
+  location: '',
+  start_date: new Date().toISOString().slice(0, 10),
+  end_date: '',
 };
 
 const initialStaffEditForm = {
@@ -156,6 +194,18 @@ export default function AdminSettingsPage() {
   const [companies, setCompanies] = useState<PartnerCompanyRow[]>([]);
   const [doctors, setDoctors] = useState<DoctorRow[]>([]);
   const [staff, setStaff] = useState<StaffProfileRow[]>([]);
+  const [apeEvents, setApeEvents] = useState<ApeEventRow[]>([]);
+  const [apeRuntime, setApeRuntime] = useState<ApeRuntime>({
+    apeModeEnabled: false,
+    activeApeEventId: null,
+    activeApeEvent: null,
+    syncSummary: {
+      pendingCount: 0,
+      conflictCount: 0,
+      failedCount: 0,
+      status: 'not_configured',
+    },
+  });
   const [pageError, setPageError] = useState('');
   const [pageNotice, setPageNotice] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -164,6 +214,7 @@ export default function AdminSettingsPage() {
   const [companyForm, setCompanyForm] = useState(initialCompanyForm);
   const [staffForm, setStaffForm] = useState(initialStaffForm);
   const [doctorForm, setDoctorForm] = useState(initialDoctorForm);
+  const [apeEventForm, setApeEventForm] = useState(initialApeEventForm);
   const [staffFilter, setStaffFilter] = useState<'all' | 'pending' | 'active'>('all');
   const [editingService, setEditingService] = useState<ServiceCatalogRow | null>(null);
   const [editingCompany, setEditingCompany] = useState<PartnerCompanyRow | null>(null);
@@ -230,6 +281,8 @@ export default function AdminSettingsPage() {
           exceptionEventCount?: number;
           overdueAppointmentCount?: number;
         };
+        apeEvents?: ApeEventRow[];
+        apeRuntime?: ApeRuntime;
       };
 
       if (!response.ok) {
@@ -240,6 +293,10 @@ export default function AdminSettingsPage() {
       setCompanies(payload.companies ?? []);
       setDoctors(payload.doctors ?? []);
       setStaff(payload.staff ?? []);
+      setApeEvents(payload.apeEvents ?? []);
+      if (payload.apeRuntime) {
+        setApeRuntime(payload.apeRuntime);
+      }
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Unable to load admin settings.');
     } finally {
@@ -438,6 +495,54 @@ export default function AdminSettingsPage() {
       'Doctor has been added.'
     );
     setDoctorForm(initialDoctorForm);
+  };
+
+  const handleApeEventSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    await submitAdminAction(
+      {
+        kind: 'ape_event',
+        apeEvent: {
+          ...apeEventForm,
+          end_date: apeEventForm.end_date || null,
+          status: 'planned',
+        },
+      },
+      'APE event has been created.'
+    );
+    setApeEventForm(initialApeEventForm);
+  };
+
+  const handleStartApeMode = async (apeEventId: string) => {
+    await submitAdminAction(
+      {
+        kind: 'ape_mode',
+        action: 'start',
+        apeEventId,
+      },
+      'APE mode is now active. New records will be tagged as APE.'
+    );
+  };
+
+  const handleEndApeMode = async () => {
+    await submitAdminAction(
+      {
+        kind: 'ape_mode',
+        action: 'end',
+      },
+      'APE mode has been ended. New records will be tagged as OPD.'
+    );
+  };
+
+  const handleSyncApeData = async () => {
+    await submitAdminAction(
+      {
+        kind: 'ape_sync',
+        apeEventId: apeRuntime.activeApeEventId,
+      },
+      'Sync check completed. Full cloud sync transport is still pending.'
+    );
   };
 
   const openStaffEdit = (member: StaffProfileRow) => {
@@ -652,6 +757,165 @@ export default function AdminSettingsPage() {
             {pageError}
           </div>
         )}
+
+        <Card className="mt-8 overflow-hidden border-amber-100">
+          <div className="border-b bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-amber-700">OPD / APE Runtime</p>
+                <h2 className="mt-2 text-2xl font-bold">Clinic Mode and Mission Sync</h2>
+                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                  OPD is the normal clinic walk-in mode. Start APE mode before a medical mission so new registrations,
+                  queues, results, payments, and audit records are tagged to the selected APE event.
+                </p>
+              </div>
+              <Badge className={apeRuntime.apeModeEnabled ? 'bg-amber-600 text-white' : ''} variant={apeRuntime.apeModeEnabled ? 'default' : 'outline'}>
+                {apeRuntime.apeModeEnabled ? 'APE Mode Active' : 'OPD Mode'}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="grid gap-6 p-6 xl:grid-cols-[0.9fr_1.1fr]">
+            <form className="space-y-4 rounded-2xl border bg-card p-5" onSubmit={handleApeEventSubmit}>
+              <div>
+                <h3 className="font-bold">Create APE Event</h3>
+                <p className="text-sm text-muted-foreground">Use one event per mission site or company schedule.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="ape_code">APE Code</Label>
+                  <Input
+                    id="ape_code"
+                    value={apeEventForm.ape_code}
+                    onChange={(event) => setApeEventForm((current) => ({ ...current, ape_code: event.target.value }))}
+                    placeholder="APE-2026-CVSU"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ape_name">APE Name</Label>
+                  <Input
+                    id="ape_name"
+                    value={apeEventForm.name}
+                    onChange={(event) => setApeEventForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="CVSU Medical Mission"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ape_location">Location</Label>
+                <Input
+                  id="ape_location"
+                  value={apeEventForm.location}
+                  onChange={(event) => setApeEventForm((current) => ({ ...current, location: event.target.value }))}
+                  placeholder="Tanza, Cavite"
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="ape_start_date">Start Date</Label>
+                  <Input
+                    id="ape_start_date"
+                    type="date"
+                    value={apeEventForm.start_date}
+                    onChange={(event) => setApeEventForm((current) => ({ ...current, start_date: event.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ape_end_date">End Date</Label>
+                  <Input
+                    id="ape_end_date"
+                    type="date"
+                    value={apeEventForm.end_date}
+                    onChange={(event) => setApeEventForm((current) => ({ ...current, end_date: event.target.value }))}
+                  />
+                </div>
+              </div>
+              <Button type="submit" disabled={isSaving} className="w-full">
+                {isSaving ? 'Saving...' : 'Create APE Event'}
+              </Button>
+            </form>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold">Current Mode</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {apeRuntime.apeModeEnabled
+                        ? `${apeRuntime.activeApeEvent?.name ?? 'Active APE'} is tagging all new records.`
+                        : 'New records are currently tagged as OPD walk-ins.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={handleSyncApeData} disabled={isSaving}>
+                      <CloudUpload className="h-4 w-4" />
+                      Sync to Cloud
+                    </Button>
+                    {apeRuntime.apeModeEnabled && (
+                      <Button type="button" variant="destructive" onClick={handleEndApeMode} disabled={isSaving}>
+                        End APE Mode
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-xl bg-muted/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pending Sync</p>
+                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.pendingCount}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Conflicts</p>
+                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.conflictCount}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Failed</p>
+                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.failedCount}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-5">
+                <h3 className="font-bold">APE Events</h3>
+                <div className="mt-4 space-y-3">
+                  {apeEvents.slice(0, 6).map((event) => (
+                    <div key={event.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background p-4">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold">{event.name}</p>
+                          <Badge variant="outline">{event.status}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{event.ape_code}</p>
+                        {event.location && (
+                          <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground">
+                            <MapPin className="h-3.5 w-3.5" />
+                            {event.location}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant={apeRuntime.activeApeEventId === event.id ? 'secondary' : 'outline'}
+                        onClick={() => handleStartApeMode(event.id)}
+                        disabled={isSaving || apeRuntime.activeApeEventId === event.id || event.status === 'completed'}
+                      >
+                        <PlayCircle className="h-4 w-4" />
+                        {apeRuntime.activeApeEventId === event.id ? 'Active' : 'Start APE'}
+                      </Button>
+                    </div>
+                  ))}
+                  {!apeEvents.length && (
+                    <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                      No APE events yet. Create one before going to a mission site.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <Tabs defaultValue="services" className="mt-8">
           <TabsList className="grid h-auto grid-cols-4 gap-2 bg-transparent p-0">

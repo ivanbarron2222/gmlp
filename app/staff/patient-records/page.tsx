@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import QRCode from 'qrcode';
-import { Copy, Download, QrCode, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
+import { Copy, Download, Eye, QrCode, Search, UserRound, Wallet, FileSpreadsheet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -41,6 +41,8 @@ type VisitTableRow = {
   address: string;
   serviceType: string;
   requestedLabService: string;
+  visitContext: 'opd' | 'ape';
+  apeEventName: string;
   currentLane: string;
   visitStatus: VisitRecord['visitStatus'];
   pendingLanes: string[];
@@ -87,6 +89,7 @@ export default function PatientRecordsPage() {
   const [serviceTypeFilter, setServiceTypeFilter] = useState('all');
   const [labServiceFilter, setLabServiceFilter] = useState('all');
   const [visitStatusFilter, setVisitStatusFilter] = useState('all');
+  const [visitContextFilter, setVisitContextFilter] = useState<'all' | 'opd' | 'ape'>('all');
   const [currentLaneFilter, setCurrentLaneFilter] = useState('all');
   const [companyFilter, setCompanyFilter] = useState('all');
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
@@ -246,6 +249,8 @@ export default function PatientRecordsPage() {
           address: [patient.streetAddress, patient.city, patient.province].filter(Boolean).join(', '),
           serviceType: visit.serviceType,
           requestedLabService: visit.requestedLabService,
+          visitContext: visit.visitContext,
+          apeEventName: visit.apeEventName,
           currentLane: visit.currentLane,
           visitStatus: visit.visitStatus,
           pendingLanes: visit.pendingLanes,
@@ -273,6 +278,8 @@ export default function PatientRecordsPage() {
           row.queueNumber,
           row.serviceType,
           row.requestedLabService,
+          row.visitContext,
+          row.apeEventName,
           row.currentLane,
         ]
           .join(' ')
@@ -284,6 +291,7 @@ export default function PatientRecordsPage() {
         (row) => labServiceFilter === 'all' || row.requestedLabService === labServiceFilter
       )
       .filter((row) => visitStatusFilter === 'all' || row.visitStatus === visitStatusFilter)
+      .filter((row) => visitContextFilter === 'all' || row.visitContext === visitContextFilter)
       .filter((row) => currentLaneFilter === 'all' || row.currentLane === currentLaneFilter)
       .filter((row) => companyFilter === 'all' || row.company === companyFilter)
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -294,6 +302,7 @@ export default function PatientRecordsPage() {
     records,
     searchQuery,
     serviceTypeFilter,
+    visitContextFilter,
     visitStatusFilter,
   ]);
 
@@ -316,6 +325,7 @@ export default function PatientRecordsPage() {
     setServiceTypeFilter('all');
     setLabServiceFilter('all');
     setVisitStatusFilter('all');
+    setVisitContextFilter('all');
     setCurrentLaneFilter('all');
     setCompanyFilter('all');
   };
@@ -463,7 +473,7 @@ export default function PatientRecordsPage() {
         </div>
 
         <Card className="mt-8 p-6 shadow-sm">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_repeat(2,minmax(0,0.6fr))] xl:grid-cols-[1.4fr_repeat(6,minmax(0,0.7fr))]">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_repeat(2,minmax(0,0.6fr))] xl:grid-cols-[1.4fr_repeat(7,minmax(0,0.7fr))]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -510,6 +520,17 @@ export default function PatientRecordsPage() {
                 <SelectItem value="awaiting-payment">Awaiting Payment</SelectItem>
                 <SelectItem value="paid">Paid</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={visitContextFilter} onValueChange={(value) => setVisitContextFilter(value as 'all' | 'opd' | 'ape')}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Visit Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">OPD + APE</SelectItem>
+                <SelectItem value="opd">OPD Walk-ins</SelectItem>
+                <SelectItem value="ape">APE Mission</SelectItem>
               </SelectContent>
             </Select>
 
@@ -577,11 +598,13 @@ export default function PatientRecordsPage() {
                   <tr className="border-b border-border">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Queue</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Patient</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Type</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Service</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Current Lane</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Status</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Lab No.</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Created</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -601,6 +624,14 @@ export default function PatientRecordsPage() {
                               <p className="font-medium">{visit.patientName}</p>
                               <p className="text-xs text-muted-foreground">{visit.patientCode}</p>
                             </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={visit.visitContext === 'ape' ? 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800' : 'rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800'}>
+                              {visit.visitContext.toUpperCase()}
+                            </span>
+                            {visit.apeEventName && (
+                              <p className="mt-2 max-w-40 text-xs text-muted-foreground">{visit.apeEventName}</p>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <p>{visit.serviceType}</p>
@@ -623,12 +654,23 @@ export default function PatientRecordsPage() {
                           <td className="px-4 py-3 text-muted-foreground">
                             {new Date(visit.createdAt).toLocaleString()}
                           </td>
+                          <td className="px-4 py-3">
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                href={`/staff/patients/${encodeURIComponent(visit.patientId)}`}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Eye className="mr-2 h-4 w-4" />
+                                View Profile
+                              </Link>
+                            </Button>
+                          </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                         {isLoading
                           ? 'Loading patient records...'
                           : pageError || 'No patient records matched the current filters.'}
@@ -675,6 +717,11 @@ export default function PatientRecordsPage() {
                     </p>
                     <div className="mt-3 space-y-2 text-sm">
                       <p><span className="font-semibold">Current Lane:</span> {selectedVisit.currentLane}</p>
+                      <p>
+                        <span className="font-semibold">Visit Type:</span>{' '}
+                        {selectedVisit.visitContext.toUpperCase()}
+                        {selectedVisit.apeEventName ? ` - ${selectedVisit.apeEventName}` : ''}
+                      </p>
                       <p><span className="font-semibold">Visit Status:</span> {formatVisitStatus(selectedVisit.visitStatus)}</p>
                       <p><span className="font-semibold">Lab Number:</span> {selectedVisit.labNumbers.join(', ') || 'N/A'}</p>
                       <p><span className="font-semibold">Created:</span> {new Date(selectedVisit.createdAt).toLocaleString()}</p>

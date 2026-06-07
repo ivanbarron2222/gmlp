@@ -116,7 +116,8 @@ function ResultReleasePageContent() {
   const queueId = searchParams.get('queueId');
   const reportRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(100);
-  const [showDetails, setShowDetails] = useState(true);
+  const [showDetails, setShowDetails] = useState(false);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [reportData, setReportData] = useState<LabReportTemplateData>(reportTemplateData);
   const [reportMeta, setReportMeta] = useState<{
     queueNumber?: string;
@@ -763,46 +764,27 @@ function ResultReleasePageContent() {
 
   return (
     <PageLayout>
-      <div className="px-8 py-8">
-        <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="px-4 py-6 md:px-8 md:py-8">
+        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">
+            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
               Result Release
             </p>
-            <h1 className="mt-2 text-3xl font-bold">PDF Report Template</h1>
-            <p className="mt-2 max-w-3xl text-muted-foreground">
-              This template is based on your reference sheets and now reads queue-linked report
-              data from Supabase when a valid `queueId` is provided.
+            <h1 className="mt-2 text-3xl font-bold">Review and Release Results</h1>
+            <p className="mt-2 max-w-2xl text-muted-foreground">
+              Select a patient, review the report, then validate or release the final result.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowDetails((current) => !current)}
-            >
-              <Eye className="mr-2 h-4 w-4" />
-              Audit Log
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={!queueId || isSavingStatus || isLoading || (reportMeta?.resultCount ?? 0) === 0}
-              onClick={() => handleReportAction('flag_review')}
-            >
-              Flag for Review
-            </Button>
           </div>
         </div>
 
-        <div className="grid gap-8 xl:grid-cols-[340px_minmax(0,1fr)]">
-          <div className="space-y-6">
-            <Card className="p-6">
+        <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <aside>
+            <Card className="p-4 xl:sticky xl:top-6">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-bold">Release Queue</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Keep the queue visible while you review and release each report.
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Choose a report to review.
                   </p>
                 </div>
                 <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
@@ -820,7 +802,7 @@ function ResultReleasePageContent() {
                 />
               </div>
 
-              <div className="mt-4 h-[60vh] min-h-[340px] space-y-3 overflow-y-auto pr-2">
+              <div className="mt-4 max-h-[66vh] min-h-[320px] space-y-2 overflow-y-auto pr-1">
                 {isLoadingReleaseList ? (
                   <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
                     Loading release queue...
@@ -833,7 +815,7 @@ function ResultReleasePageContent() {
                       <Link
                         key={item.queueId}
                         href={`/staff/result-release?queueId=${encodeURIComponent(item.queueId)}`}
-                        className={`block rounded-2xl border p-4 transition-all ${
+                        className={`block rounded-xl border p-3 transition-colors ${
                           isActive
                             ? 'border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20'
                             : 'border-border bg-background hover:border-primary/40 hover:bg-primary/5'
@@ -841,13 +823,13 @@ function ResultReleasePageContent() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="font-semibold leading-snug">
+                            <p className="text-sm font-semibold leading-snug">
                               {item.queueNumber} • {item.patientName}
                             </p>
-                            <p className="mt-1 text-sm text-muted-foreground">
+                            <p className="mt-1 text-xs text-muted-foreground">
                               {item.company || 'No company'} • {item.date}
                             </p>
-                            <p className="mt-2 text-xs text-muted-foreground">
+                            <p className="mt-2 text-[11px] text-muted-foreground">
                               {item.machineImportCount} imports • {item.orderCount} orders •{' '}
                               {item.pendingLaneCount} pending lanes
                             </p>
@@ -889,219 +871,125 @@ function ResultReleasePageContent() {
                 )}
               </div>
             </Card>
+          </aside>
 
-            <Card className="p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                Patient Summary
-              </p>
-              <h2 className="mt-4 text-2xl font-bold">{reportData.patient.name}</h2>
-              <div className="mt-4 space-y-3 text-sm">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Patient Number
-                  </p>
-                  <p className="mt-1 font-medium">{reportData.patient.patientNumber}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Company
-                  </p>
-                  <p className="mt-1 font-medium">{reportData.patient.company}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Status
-                  </p>
-                  <p className="mt-1">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        summaryStatus === 'Complete'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-amber-100 text-amber-700'
-                      }`}
-                    >
-                      {summaryStatus}
-                    </span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Date
-                  </p>
-                  <p className="mt-1 font-medium">{reportData.patient.date}</p>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-6">
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                Document Status
-              </p>
-              <StatusBadge status={badgeStatus} />
-              {reportMeta?.hasReviewFlag && (
-                <p className="mt-3 text-xs font-semibold text-amber-700">
-                  This report is flagged for review and cannot be released yet.
+          <main className="min-w-0 space-y-4">
+            {!queueId ? (
+              <Card className="border-dashed p-10 text-center">
+                <h2 className="text-xl font-bold">Select a report from the release queue</h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  The patient summary, release actions, and report preview will appear here.
                 </p>
-              )}
-              {reportMeta?.validatedAt && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Validated: {new Date(reportMeta.validatedAt).toLocaleString()}
-                </p>
-              )}
-              {reportMeta?.releasedAt && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Released: {new Date(reportMeta.releasedAt).toLocaleString()}
-                </p>
-              )}
-              {reportMeta?.emailSentAt && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Emailed: {new Date(reportMeta.emailSentAt).toLocaleString()}
-                </p>
-              )}
-            </Card>
-
-            <Card className="space-y-3 p-6">
-              {actionError && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {actionError}
-                </div>
-              )}
-              {actionNotice && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {actionNotice}
-                </div>
-              )}
-              <div className="space-y-2">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Review Remarks
-                </p>
-                <Textarea
-                  value={reviewNotes}
-                  onChange={(event) => setReviewNotes(event.target.value)}
-                  placeholder="Enter review remarks or exception notes..."
-                  className="min-h-24"
-                />
-              </div>
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={
-                  !queueId ||
-                  isSavingStatus ||
-                  isLoading ||
-                  (reportMeta?.resultCount ?? 0) === 0 ||
-                  reportMeta?.hasReviewFlag
-                }
-                onClick={() => handleReportAction('validate')}
-              >
-                {isSavingStatus ? 'Saving...' : 'Validate Report'}
-              </Button>
-              <Button
-                className="w-full"
-                disabled={
-                  !queueId ||
-                  isSavingStatus ||
-                  isLoading ||
-                  (reportMeta?.resultCount ?? 0) === 0 ||
-                  reportMeta?.hasReviewFlag
-                }
-                onClick={() => handleReportAction('release')}
-              >
-                {isSavingStatus
-                  ? 'Saving...'
-                  : reportMeta?.reportStatus === 'released'
-                    ? 'Regenerate Released PDF'
-                    : 'Release Result'}
-              </Button>
-              <Button variant="outline" className="w-full" onClick={handlePrintReport}>
-                <Download className="mr-2 h-4 w-4" />
-                Save as PDF
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={
-                  !queueId ||
-                  isSendingEmail ||
-                  reportMeta?.reportStatus !== 'released' ||
-                  !reportMeta?.emailAddress
-                }
-                onClick={handleSendEmail}
-              >
-                <Mail className="mr-2 h-4 w-4" />
-                {isSendingEmail ? 'Sending Email...' : 'Email Patient'}
-              </Button>
-            </Card>
-
-            {queueId && (
-              <Card className="p-6">
-                <h3 className="text-lg font-bold">Live Report Context</h3>
-                <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  <p>
-                    Queue Number:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.queueNumber || 'N/A'}
-                    </span>
-                  </p>
-                  <p>
-                    Result Rows:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.resultCount ?? 0}
-                    </span>
-                  </p>
-                  <p>
-                    Machine Imports:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.machineImportCount ?? 0}
-                    </span>
-                  </p>
-                  <p>
-                    Report Status:{' '}
-                    <span className="font-medium capitalize text-foreground">
-                      {reportMeta?.reportStatus ?? 'pending'}
-                    </span>
-                  </p>
-                  <p>
-                    Stored PDF:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.pdfStoragePath || 'Not generated yet'}
-                    </span>
-                  </p>
-                  <p>
-                    Patient Email:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.emailAddress || 'No email on file'}
-                    </span>
-                  </p>
-                  <p>
-                    Review Flag:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.hasReviewFlag ? 'Flagged' : 'Clear'}
-                    </span>
-                  </p>
-                  <p>
-                    Review Notes:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.reviewNotes?.trim() || 'None'}
-                    </span>
-                  </p>
-                  <p>
-                    Lanes:{' '}
-                    <span className="font-medium text-foreground">
-                      {reportMeta?.lanes?.join(', ') || 'N/A'}
-                    </span>
-                  </p>
-                </div>
               </Card>
-            )}
-          </div>
+            ) : (
+              <>
+                <Card className="p-5">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={badgeStatus} />
+                        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                          Queue {reportMeta?.queueNumber || 'N/A'}
+                        </span>
+                      </div>
+                      <h2 className="mt-3 text-2xl font-bold">{reportData.patient.name}</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {reportData.patient.patientNumber} · {reportData.patient.company} · {reportData.patient.date}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="rounded-lg bg-muted/60 px-3 py-2">
+                        <p className="text-lg font-bold text-foreground">{reportMeta?.resultCount ?? 0}</p>
+                        <p className="text-muted-foreground">Results</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/60 px-3 py-2">
+                        <p className="text-lg font-bold text-foreground">{reportMeta?.machineImportCount ?? 0}</p>
+                        <p className="text-muted-foreground">Imports</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/60 px-3 py-2">
+                        <p className="text-lg font-bold text-foreground">{reportMeta?.lanes?.length ?? 0}</p>
+                        <p className="text-muted-foreground">Lanes</p>
+                      </div>
+                    </div>
+                  </div>
 
-          <div className="space-y-4">
-            <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  {reportMeta?.hasReviewFlag && (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                      This report is flagged for review. Resolve the issue before releasing it.
+                    </div>
+                  )}
+                  {actionError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div>}
+                  {actionNotice && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{actionNotice}</div>}
+
+                  <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
+                    <Button
+                      variant="outline"
+                      disabled={!queueId || isSavingStatus || isLoading || (reportMeta?.resultCount ?? 0) === 0 || reportMeta?.hasReviewFlag}
+                      onClick={() => handleReportAction('validate')}
+                    >
+                      {isSavingStatus ? 'Saving...' : 'Validate Report'}
+                    </Button>
+                    <Button
+                      disabled={!queueId || isSavingStatus || isLoading || (reportMeta?.resultCount ?? 0) === 0 || reportMeta?.hasReviewFlag}
+                      onClick={() => handleReportAction('release')}
+                    >
+                      {isSavingStatus ? 'Saving...' : reportMeta?.reportStatus === 'released' ? 'Regenerate PDF' : 'Release Result'}
+                    </Button>
+                    <Button variant="outline" onClick={handlePrintReport}>
+                      <Download className="mr-2 h-4 w-4" /> Print / Save PDF
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={!queueId || isSendingEmail || reportMeta?.reportStatus !== 'released' || !reportMeta?.emailAddress}
+                      onClick={handleSendEmail}
+                    >
+                      <Mail className="mr-2 h-4 w-4" /> {isSendingEmail ? 'Sending...' : 'Email Patient'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="text-red-700 hover:bg-red-50 hover:text-red-800"
+                      disabled={!queueId || isSavingStatus || isLoading || (reportMeta?.resultCount ?? 0) === 0}
+                      onClick={() => setShowReviewPanel((current) => !current)}
+                    >
+                      Flag for Review
+                    </Button>
+                  </div>
+
+                  {showReviewPanel && (
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50/60 p-4">
+                      <label className="text-sm font-semibold text-red-900" htmlFor="review-notes">Review remarks</label>
+                      <p className="mt-1 text-xs text-red-700">Explain the issue so the encoder knows what must be corrected.</p>
+                      <Textarea id="review-notes" value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} placeholder="Describe the issue found in this report..." className="mt-3 min-h-24 bg-white" />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button variant="destructive" onClick={() => handleReportAction('flag_review')} disabled={isSavingStatus || !reviewNotes.trim()}>
+                          Submit Review Flag
+                        </Button>
+                        <Button variant="outline" onClick={() => setShowReviewPanel(false)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <details className="mt-4 border-t pt-4 text-sm">
+                    <summary className="cursor-pointer font-semibold text-primary">Show report details</summary>
+                    <div className="mt-3 grid gap-x-6 gap-y-2 text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
+                      <p>Patient email: <span className="font-medium text-foreground">{reportMeta?.emailAddress || 'No email on file'}</span></p>
+                      <p>Lanes: <span className="font-medium text-foreground">{reportMeta?.lanes?.join(', ') || 'N/A'}</span></p>
+                      <p>Stored PDF: <span className="font-medium text-foreground">{reportMeta?.pdfStoragePath ? 'Generated' : 'Not generated yet'}</span></p>
+                      {reportMeta?.validatedAt && <p>Validated: <span className="font-medium text-foreground">{new Date(reportMeta.validatedAt).toLocaleString()}</span></p>}
+                      {reportMeta?.releasedAt && <p>Released: <span className="font-medium text-foreground">{new Date(reportMeta.releasedAt).toLocaleString()}</span></p>}
+                      {reportMeta?.emailSentAt && <p>Emailed: <span className="font-medium text-foreground">{new Date(reportMeta.emailSentAt).toLocaleString()}</span></p>}
+                    </div>
+                  </details>
+                </Card>
+              </>
+            )}
+
+            <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
+                  aria-label="Zoom report preview out"
                   onClick={() => setZoom((current) => Math.max(60, current - 10))}
                 >
                   <ZoomOut className="h-4 w-4" />
@@ -1110,6 +998,7 @@ function ResultReleasePageContent() {
                 <Button
                   variant="outline"
                   size="sm"
+                  aria-label="Zoom report preview in"
                   onClick={() => setZoom((current) => Math.min(160, current + 10))}
                 >
                   <ZoomIn className="h-4 w-4" />
@@ -1118,11 +1007,11 @@ function ResultReleasePageContent() {
 
               <Button variant="outline" size="sm" onClick={() => setShowDetails((current) => !current)}>
                 {showDetails ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-                {showDetails ? 'Hide' : 'Show'} Side Details
+                {showDetails ? 'Hide' : 'Show'} Audit History
               </Button>
             </Card>
 
-            <div className="overflow-auto rounded-3xl border bg-[#edf3ee] p-6">
+            <div className="overflow-auto rounded-2xl border bg-[#edf3ee] p-4 md:p-6">
               {isLoading && (
                 <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
                   Loading live report data...
@@ -1181,7 +1070,7 @@ function ResultReleasePageContent() {
                 </div>
               </Card>
             )}
-          </div>
+          </main>
         </div>
       </div>
     </PageLayout>
@@ -1195,4 +1084,3 @@ export default function ResultReleasePage() {
     </Suspense>
   );
 }
-

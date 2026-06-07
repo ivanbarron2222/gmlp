@@ -34,6 +34,8 @@ export interface VisitRecord {
   queueEntryId: string;
   queueNumber: string;
   labNumbers: string[];
+  visitContext: 'opd' | 'ape';
+  apeEventName: string;
   patientName: string;
   serviceType: VisitServiceType;
   requestedLabService: string;

@@ -143,6 +143,24 @@ export default function PatientProfilePage() {
   const template = examinationTemplates[activeType];
   const canEdit = profile?.editableTestTypes.includes(activeType) ?? false;
   const groups = useMemo(() => Array.from(new Set(template?.fields.map((field) => field.group) ?? [])), [template]);
+  const completionChecklist = useMemo(
+    () =>
+      (profile?.visibleTestTypes ?? []).map((testType) => {
+        const typeInstances = profile?.testInstances.filter((instance) => instance.test_type === testType) ?? [];
+        const completed = typeInstances.filter((instance) => instance.status === 'completed').length;
+        const drafts = typeInstances.filter((instance) => instance.status !== 'completed').length;
+
+        return {
+          testType,
+          label: examinationTemplates[testType]?.label ?? testType,
+          total: typeInstances.length,
+          completed,
+          drafts,
+          status: completed > 0 ? 'completed' : drafts > 0 ? 'draft' : 'pending',
+        };
+      }),
+    [profile?.testInstances, profile?.visibleTestTypes]
+  );
 
   useEffect(() => {
     setActiveInstanceId(activeInstance?.id ?? '');
@@ -224,6 +242,55 @@ export default function PatientProfilePage() {
 
         {error && <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
         {notice && <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
+
+        <Card className="mt-6 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">Result Checklist</p>
+              <h2 className="mt-1 text-xl font-bold">Completion before release</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Use this to catch missing or draft result sections before encoding, printing, or releasing.
+              </p>
+            </div>
+            <div className="rounded-full bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
+              {completionChecklist.filter((item) => item.status === 'completed').length} / {completionChecklist.length} completed
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {completionChecklist.map((item) => (
+              <button
+                key={item.testType}
+                type="button"
+                onClick={() => setActiveType(item.testType)}
+                className={`rounded-2xl border p-4 text-left transition hover:border-primary/50 ${
+                  item.status === 'completed'
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : item.status === 'draft'
+                      ? 'border-amber-200 bg-amber-50'
+                      : 'border-border bg-background'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold">{item.label}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-black uppercase ${
+                      item.status === 'completed'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : item.status === 'draft'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {item.status}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {item.total} test instance{item.total === 1 ? '' : 's'} | {item.completed} completed
+                </p>
+              </button>
+            ))}
+          </div>
+        </Card>
 
         <Card className="mt-6 p-4 md:p-6">
           <Tabs value={activeType} onValueChange={setActiveType}>
