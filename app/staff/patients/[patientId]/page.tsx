@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CheckCircle2, ClipboardCheck, Plus, RotateCcw, Save, UserRound } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, Cpu, Keyboard, Plus, RotateCcw, Save, UserRound } from 'lucide-react';
 import { PageLayout } from '@/components/layout/page-layout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,8 @@ type TestInstance = {
   sequence_number: number;
   status: string;
   result_payload: Record<string, unknown>;
+  input_source?: 'manual' | 'machine';
+  machine_source?: string | null;
   notes: string | null;
   updated_at: string;
 };
@@ -170,7 +172,7 @@ export default function PatientProfilePage() {
     setNotice('');
   }, [activeInstance?.id]);
 
-  const saveInstance = async (options?: { createNew?: boolean; status?: 'draft' | 'completed' }) => {
+  const saveInstance = async (options?: { createNew?: boolean; status?: 'draft' | 'completed'; inputSource?: 'manual' | 'machine' }) => {
     try {
       setIsSaving(true);
       setError('');
@@ -183,7 +185,10 @@ export default function PatientProfilePage() {
         body: JSON.stringify(createNew ? {
           testType: activeType,
           visitId: profile?.visits[0]?.id ?? null,
-          resultPayload: getNormalPayload(activeType),
+          resultPayload: options?.inputSource === 'machine' ? {} : getNormalPayload(activeType),
+          inputSource: options?.inputSource ?? 'manual',
+          machineSource: options?.inputSource === 'machine' ? 'pending-machine-bridge' : undefined,
+          machinePayload: options?.inputSource === 'machine' ? { status: 'waiting_for_machine_bridge' } : undefined,
         } : {
           id: activeInstance?.id,
           testType: activeType,
@@ -305,15 +310,41 @@ export default function PatientProfilePage() {
                       Test {instance.sequence_number}
                     </Button>
                   ))}
-                  {canEdit && <Button type="button" size="sm" variant="outline" onClick={() => void saveInstance({ createNew: true })} disabled={isSaving}><Plus className="mr-1 h-4 w-4" /> Add Test</Button>}
+                  {canEdit && activeType === 'physical_exam' && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => void saveInstance({ createNew: true, inputSource: 'manual' })} disabled={isSaving}>
+                      <Plus className="mr-1 h-4 w-4" /> Add Test
+                    </Button>
+                  )}
                 </div>
+
+                {canEdit && activeType !== 'physical_exam' && (
+                  <div className="mt-4 rounded-2xl border bg-muted/20 p-4">
+                    <p className="font-bold">Add Test Source</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Choose how this result will be created. Machine Integration is prepared for the local machine bridge.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={() => void saveInstance({ createNew: true, inputSource: 'manual' })} disabled={isSaving}>
+                        <Keyboard className="mr-2 h-4 w-4" />
+                        Manual Input
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => void saveInstance({ createNew: true, inputSource: 'machine' })} disabled={isSaving}>
+                        <Cpu className="mr-2 h-4 w-4" />
+                        Machine Integration
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {activeInstance && template ? (
                   <div className="mt-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <h2 className="text-xl font-bold">{template.label} - Test {activeInstance.sequence_number}</h2>
-                        <p className="mt-1 text-sm text-muted-foreground">Template v{template.version}. Press Enter to move to the next field.</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Template v{template.version}. Source: {activeInstance.input_source === 'machine' ? 'Machine Integration' : 'Manual Input'}.
+                          {activeInstance.input_source === 'machine' ? ' Awaiting machine bridge/import review.' : ' Press Enter to move to the next field.'}
+                        </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={() => setIsReviewing((current) => !current)}>
@@ -325,7 +356,26 @@ export default function PatientProfilePage() {
                       </div>
                     </div>
 
-                    {isReviewing ? (
+                    {activeInstance.input_source === 'machine' && activeType !== 'physical_exam' ? (
+                      <div className="mt-6 rounded-2xl border border-dashed bg-muted/20 p-6">
+                        <div className="flex items-start gap-3">
+                          <div className="rounded-xl bg-primary/10 p-3 text-primary">
+                            <Cpu className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-bold">Machine Integration Pending</h3>
+                            <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                              This test instance is reserved for machine integration. The future local machine bridge will
+                              read the analyzer output, import the raw payload, then map values into the result template
+                              for staff review before completion.
+                            </p>
+                            <p className="mt-3 text-sm">
+                              Machine source: <span className="font-semibold">{activeInstance.machine_source || 'pending-machine-bridge'}</span>
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : isReviewing ? (
                       <div className="mt-6 overflow-x-auto rounded-xl border">
                         <table className="w-full min-w-[680px] text-left text-sm">
                           <thead className="bg-muted/50"><tr><th className="px-4 py-3">Section</th><th className="px-4 py-3">Test</th><th className="px-4 py-3">Reference</th><th className="px-4 py-3">Result</th><th className="px-4 py-3">Status</th></tr></thead>

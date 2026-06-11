@@ -416,19 +416,7 @@ export default function PatientRecordsPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
-              Patient Management
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">Patient Records</h1>
-            <p className="mt-2 text-muted-foreground">
-              View patient visit history in a simple records list, then open each record for full details.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3">
           <Card className="p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-primary/10 p-3 text-primary">

@@ -765,18 +765,6 @@ function ResultReleasePageContent() {
   return (
     <PageLayout>
       <div className="px-4 py-6 md:px-8 md:py-8">
-        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-primary">
-              Result Release
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">Review and Release Results</h1>
-            <p className="mt-2 max-w-2xl text-muted-foreground">
-              Select a patient, review the report, then validate or release the final result.
-            </p>
-          </div>
-        </div>
-
         <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
           <aside>
             <Card className="p-4 xl:sticky xl:top-6">

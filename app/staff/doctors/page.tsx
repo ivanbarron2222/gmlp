@@ -136,14 +136,7 @@ export default function StaffDoctorsPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Nurse Tools</p>
-            <h1 className="mt-2 text-3xl font-bold">Doctors</h1>
-            <p className="mt-2 max-w-3xl text-muted-foreground">
-              Set which doctors can be assigned to check-up patients today.
-            </p>
-          </div>
+        <div className="flex justify-end">
           <div className="grid gap-3 sm:grid-cols-2">
             <Card className="min-w-32 p-4 text-center">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Available</p>

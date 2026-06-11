@@ -643,17 +643,11 @@ export default function PatientRegistrationPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Patient Registration</h1>
-            <p className="mt-2 text-muted-foreground">
-              Review registered patients, print queue slips, and open active visits from front desk intake.
-            </p>
-          </div>
+        <div className="flex justify-end">
           <Button onClick={handleOpenManualForm}>Open Registration Form</Button>
         </div>
 
-        <Card className="mt-8 p-6 shadow-sm">
+        <Card className="mt-6 p-6 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-bold">Registered Patients Today</h2>

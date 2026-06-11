@@ -155,22 +155,13 @@ export default function ActivityLogPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-              Admin Oversight
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">Activity Log</h1>
-            <p className="mt-2 max-w-3xl text-muted-foreground">
-              Review queue actions, result processing, billing events, and admin configuration changes from one audit-friendly timeline.
-            </p>
-          </div>
+        <div className="flex justify-end">
           <div className="rounded-full bg-muted px-4 py-2 text-sm font-semibold text-muted-foreground">
             {filteredItems.length} entries
           </div>
         </div>
 
-        <Card className="mt-8 p-6">
+        <Card className="mt-6 p-6">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input

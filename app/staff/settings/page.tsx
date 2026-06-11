@@ -1,7 +1,22 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Building2, CloudUpload, DollarSign, MapPin, Pencil, PlayCircle, ShieldPlus, Stethoscope, Trash2, Users } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Building2,
+  CheckCircle2,
+  CloudUpload,
+  DollarSign,
+  MapPin,
+  Pencil,
+  PlayCircle,
+  ShieldPlus,
+  Stethoscope,
+  Trash2,
+  Upload,
+  Users,
+} from 'lucide-react';
 import { actionPermissionCatalog, getDefaultActionPermissions, type ActionPermission } from '@/lib/action-permissions';
 import { PageLayout } from '@/components/layout/page-layout';
 import { Card } from '@/components/ui/card';
@@ -160,6 +175,11 @@ const initialApeEventForm = {
   end_date: '',
 };
 
+const initialMasterlistForm = {
+  apeEventId: '',
+  companyName: '',
+};
+
 const initialStaffEditForm = {
   full_name: '',
   role: 'nurse',
@@ -186,6 +206,66 @@ async function getAdminAccessToken() {
   }
 
   return session.access_token;
+}
+
+function AdminMetricCard({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  tone = 'default',
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: typeof Activity;
+  tone?: 'default' | 'success' | 'warning';
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+      : tone === 'warning'
+        ? 'bg-amber-50 text-amber-700 ring-amber-100'
+        : 'bg-primary/10 text-primary ring-primary/10';
+
+  return (
+    <Card className="group overflow-hidden border-border/70 bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+          <p className="mt-2 text-3xl font-black leading-none tracking-tight">{value}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+        </div>
+        <div className={`rounded-2xl p-3 ring-1 ${toneClass}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SyncStatusCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: 'default' | 'warning' | 'danger';
+}) {
+  const toneClass =
+    tone === 'danger'
+      ? 'border-red-100 bg-red-50 text-red-700'
+      : tone === 'warning'
+        ? 'border-amber-100 bg-amber-50 text-amber-700'
+        : 'border-border bg-muted/40 text-foreground';
+
+  return (
+    <div className={`rounded-2xl border p-4 ${toneClass}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{label}</p>
+      <p className="mt-2 text-3xl font-black leading-none">{value}</p>
+    </div>
+  );
 }
 
 export default function AdminSettingsPage() {
@@ -215,7 +295,10 @@ export default function AdminSettingsPage() {
   const [staffForm, setStaffForm] = useState(initialStaffForm);
   const [doctorForm, setDoctorForm] = useState(initialDoctorForm);
   const [apeEventForm, setApeEventForm] = useState(initialApeEventForm);
+  const [masterlistForm, setMasterlistForm] = useState(initialMasterlistForm);
+  const [masterlistFile, setMasterlistFile] = useState<File | null>(null);
   const [staffFilter, setStaffFilter] = useState<'all' | 'pending' | 'active'>('all');
+  const [isStaffCreateOpen, setIsStaffCreateOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceCatalogRow | null>(null);
   const [editingCompany, setEditingCompany] = useState<PartnerCompanyRow | null>(null);
   const [editingStaff, setEditingStaff] = useState<StaffProfileRow | null>(null);
@@ -479,6 +562,7 @@ export default function AdminSettingsPage() {
       'Staff account has been created.'
     );
     setStaffForm(initialStaffForm);
+    setIsStaffCreateOpen(false);
   };
 
   const handleDoctorSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -543,6 +627,57 @@ export default function AdminSettingsPage() {
       },
       'Sync check completed. Full cloud sync transport is still pending.'
     );
+  };
+
+  const handleMasterlistUpload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!masterlistFile) {
+      setPageError('Select an Excel masterlist file first.');
+      return;
+    }
+
+    const apeEventId = masterlistForm.apeEventId || apeRuntime.activeApeEventId || apeEvents[0]?.id || '';
+    if (!apeEventId || !masterlistForm.companyName.trim()) {
+      setPageError('APE event and company name are required for masterlist upload.');
+      return;
+    }
+
+    setIsSaving(true);
+    setPageError('');
+    setPageNotice('');
+
+    try {
+      const token = await getAdminAccessToken();
+      const formData = new FormData();
+      formData.set('file', masterlistFile);
+      formData.set('apeEventId', apeEventId);
+      formData.set('companyName', masterlistForm.companyName.trim());
+
+      const response = await fetch('/api/staff/ape-masterlist/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { batch?: { totalPatients: number; firstLabOrder: string; lastLabOrder: string }; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Unable to upload APE masterlist.');
+      }
+
+      setPageNotice(
+        `Masterlist uploaded. ${payload?.batch?.totalPatients ?? 0} patients generated from ${payload?.batch?.firstLabOrder ?? 'LAB-001'} to ${payload?.batch?.lastLabOrder ?? 'LAB-N'}.`
+      );
+      setMasterlistForm(initialMasterlistForm);
+      setMasterlistFile(null);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Unable to upload APE masterlist.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const openStaffEdit = (member: StaffProfileRow) => {
@@ -716,176 +851,262 @@ export default function AdminSettingsPage() {
 
   return (
     <PageLayout>
-      <div className="px-8 py-8">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Admin Controls</p>
-            <h1 className="mt-2 text-3xl font-bold">System Settings</h1>
-            <p className="mt-2 max-w-3xl text-muted-foreground">
-              Manage pricing, partner companies, and staff accounts from one workspace. Changes here
-              directly affect the operational workflow, especially cashier billing and clinic setup.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Card className="min-w-32 p-4 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active Services</p>
-              <p className="mt-2 text-3xl font-black text-primary">{activeServices.length}</p>
-            </Card>
-            <Card className="min-w-32 p-4 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Partners</p>
-              <p className="mt-2 text-3xl font-black">{activeCompanies.length}</p>
-            </Card>
-            <Card className="min-w-32 p-4 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Staff Users</p>
-              <p className="mt-2 text-3xl font-black">{activeStaff.length}</p>
-            </Card>
-            <Card className="min-w-32 p-4 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Doctors</p>
-              <p className="mt-2 text-3xl font-black">{activeDoctors.length}</p>
-            </Card>
+      <div className="space-y-6 px-4 py-6 md:px-8 md:py-8">
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_1.85fr]">
+          <Card className="overflow-hidden border-border/70 bg-gradient-to-br from-primary/10 via-card to-emerald-50 p-0 shadow-sm">
+            <div className="border-b border-white/60 bg-background/70 px-5 py-4 backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Clinic Runtime</p>
+                  <p className="mt-1 text-xl font-black">
+                    {apeRuntime.apeModeEnabled ? 'APE Mission Mode' : 'OPD Walk-in Mode'}
+                  </p>
+                </div>
+                <Badge
+                  className={apeRuntime.apeModeEnabled ? 'bg-amber-600 text-white hover:bg-amber-600' : ''}
+                  variant={apeRuntime.apeModeEnabled ? 'default' : 'outline'}
+                >
+                  {apeRuntime.apeModeEnabled ? 'Active Mission' : 'Standard Clinic'}
+                </Badge>
+              </div>
+            </div>
+            <div className="space-y-5 p-5">
+              <div className="rounded-3xl border bg-background/80 p-5 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                    {apeRuntime.apeModeEnabled ? <Activity className="h-6 w-6" /> : <CheckCircle2 className="h-6 w-6" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold">
+                      {apeRuntime.apeModeEnabled
+                        ? apeRuntime.activeApeEvent?.name ?? 'Mission currently active'
+                        : 'Ready for regular clinic walk-ins'}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {apeRuntime.apeModeEnabled
+                        ? 'New registrations, queues, payments, results, and audit logs are tagged to the selected APE event.'
+                        : 'New records are tagged as OPD. Start APE mode only when the clinic is operating at a mission site.'}
+                    </p>
+                    {apeRuntime.activeApeEvent?.location && (
+                      <p className="mt-3 flex items-center gap-2 text-sm font-medium text-primary">
+                        <MapPin className="h-4 w-4" />
+                        {apeRuntime.activeApeEvent.location}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SyncStatusCard label="Pending Sync" value={apeRuntime.syncSummary.pendingCount} tone="warning" />
+                <SyncStatusCard label="Conflicts" value={apeRuntime.syncSummary.conflictCount} tone="danger" />
+                <SyncStatusCard label="Failed" value={apeRuntime.syncSummary.failedCount} tone="danger" />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={handleSyncApeData} disabled={isSaving} className="min-h-11">
+                  <CloudUpload className="h-4 w-4" />
+                  Sync to Cloud
+                </Button>
+                {apeRuntime.apeModeEnabled && (
+                  <Button type="button" variant="destructive" onClick={handleEndApeMode} disabled={isSaving} className="min-h-11">
+                    End APE Mode
+                  </Button>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <AdminMetricCard
+              label="Services"
+              value={activeServices.length}
+              detail="Active billable items"
+              icon={DollarSign}
+            />
+            <AdminMetricCard
+              label="Partners"
+              value={activeCompanies.length}
+              detail="Company packages"
+              icon={Building2}
+            />
+            <AdminMetricCard
+              label="Staff"
+              value={activeStaff.length}
+              detail={`${pendingStaff.length} pending review`}
+              icon={Users}
+              tone={pendingStaff.length > 0 ? 'warning' : 'default'}
+            />
+            <AdminMetricCard
+              label="Doctors"
+              value={activeDoctors.length}
+              detail="Available directory"
+              icon={Stethoscope}
+              tone="success"
+            />
           </div>
         </div>
 
         {pageNotice && (
-          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
             {pageNotice}
           </div>
         )}
 
         {pageError && (
-          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             {pageError}
           </div>
         )}
 
-        <Card className="mt-8 overflow-hidden border-amber-100">
-          <div className="border-b bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+        <Card className="overflow-hidden border-border/70 shadow-sm">
+          <div className="border-b bg-muted/30 px-5 py-4 md:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-amber-700">OPD / APE Runtime</p>
-                <h2 className="mt-2 text-2xl font-bold">Clinic Mode and Mission Sync</h2>
-                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                  OPD is the normal clinic walk-in mode. Start APE mode before a medical mission so new registrations,
-                  queues, results, payments, and audit records are tagged to the selected APE event.
-                </p>
+                <h2 className="text-xl font-black tracking-tight">Mission Operations</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Create APE events, upload masterlists, and start mission mode from one workspace.</p>
               </div>
-              <Badge className={apeRuntime.apeModeEnabled ? 'bg-amber-600 text-white' : ''} variant={apeRuntime.apeModeEnabled ? 'default' : 'outline'}>
-                {apeRuntime.apeModeEnabled ? 'APE Mode Active' : 'OPD Mode'}
-              </Badge>
+              <Badge variant="outline">{apeEvents.length} APE events</Badge>
             </div>
           </div>
 
-          <div className="grid gap-6 p-6 xl:grid-cols-[0.9fr_1.1fr]">
-            <form className="space-y-4 rounded-2xl border bg-card p-5" onSubmit={handleApeEventSubmit}>
-              <div>
-                <h3 className="font-bold">Create APE Event</h3>
-                <p className="text-sm text-muted-foreground">Use one event per mission site or company schedule.</p>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-5 p-5 md:p-6 xl:grid-cols-[0.85fr_1.15fr]">
+            <div className="space-y-4">
+              <form className="space-y-4 rounded-2xl border bg-card p-5" onSubmit={handleApeEventSubmit}>
+                <div>
+                  <h3 className="font-bold">Create APE Event</h3>
+                  <p className="text-sm text-muted-foreground">Use one event per mission site or company schedule.</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="ape_code">APE Code</Label>
+                    <Input
+                      id="ape_code"
+                      value={apeEventForm.ape_code}
+                      onChange={(event) => setApeEventForm((current) => ({ ...current, ape_code: event.target.value }))}
+                      placeholder="APE-2026-CVSU"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ape_name">APE Name</Label>
+                    <Input
+                      id="ape_name"
+                      value={apeEventForm.name}
+                      onChange={(event) => setApeEventForm((current) => ({ ...current, name: event.target.value }))}
+                      placeholder="CVSU Medical Mission"
+                      required
+                    />
+                  </div>
+                </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ape_code">APE Code</Label>
+                  <Label htmlFor="ape_location">Location</Label>
                   <Input
-                    id="ape_code"
-                    value={apeEventForm.ape_code}
-                    onChange={(event) => setApeEventForm((current) => ({ ...current, ape_code: event.target.value }))}
-                    placeholder="APE-2026-CVSU"
+                    id="ape_location"
+                    value={apeEventForm.location}
+                    onChange={(event) => setApeEventForm((current) => ({ ...current, location: event.target.value }))}
+                    placeholder="Tanza, Cavite"
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="ape_start_date">Start Date</Label>
+                    <Input
+                      id="ape_start_date"
+                      type="date"
+                      value={apeEventForm.start_date}
+                      onChange={(event) => setApeEventForm((current) => ({ ...current, start_date: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ape_end_date">End Date</Label>
+                    <Input
+                      id="ape_end_date"
+                      type="date"
+                      value={apeEventForm.end_date}
+                      onChange={(event) => setApeEventForm((current) => ({ ...current, end_date: event.target.value }))}
+                    />
+                  </div>
+                </div>
+                <Button type="submit" disabled={isSaving} className="w-full">
+                  {isSaving ? 'Saving...' : 'Create APE Event'}
+                </Button>
+              </form>
+
+              <form className="space-y-4 rounded-2xl border bg-card p-5" onSubmit={handleMasterlistUpload}>
+                <div>
+                  <h3 className="font-bold">Upload Mission Masterlist</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Upload Excel, count valid patients, then generate LAB-001 to LAB-N scoped to this APE and company.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="masterlist_ape_event">APE Event</Label>
+                  <select
+                    id="masterlist_ape_event"
+                    value={masterlistForm.apeEventId || apeRuntime.activeApeEventId || ''}
+                    onChange={(event) => setMasterlistForm((current) => ({ ...current, apeEventId: event.target.value }))}
+                    className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                    required
+                  >
+                    <option value="">Select APE event</option>
+                    {apeEvents.map((event) => (
+                      <option key={event.id} value={event.id}>
+                        {event.name} ({event.ape_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="masterlist_company">Company / Group</Label>
+                  <Input
+                    id="masterlist_company"
+                    value={masterlistForm.companyName}
+                    onChange={(event) => setMasterlistForm((current) => ({ ...current, companyName: event.target.value }))}
+                    placeholder="CVSU"
                     required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ape_name">APE Name</Label>
+                  <Label htmlFor="masterlist_file">Excel File</Label>
                   <Input
-                    id="ape_name"
-                    value={apeEventForm.name}
-                    onChange={(event) => setApeEventForm((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="CVSU Medical Mission"
+                    id="masterlist_file"
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(event) => setMasterlistFile(event.target.files?.[0] ?? null)}
                     required
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ape_location">Location</Label>
-                <Input
-                  id="ape_location"
-                  value={apeEventForm.location}
-                  onChange={(event) => setApeEventForm((current) => ({ ...current, location: event.target.value }))}
-                  placeholder="Tanza, Cavite"
-                />
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="ape_start_date">Start Date</Label>
-                  <Input
-                    id="ape_start_date"
-                    type="date"
-                    value={apeEventForm.start_date}
-                    onChange={(event) => setApeEventForm((current) => ({ ...current, start_date: event.target.value }))}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ape_end_date">End Date</Label>
-                  <Input
-                    id="ape_end_date"
-                    type="date"
-                    value={apeEventForm.end_date}
-                    onChange={(event) => setApeEventForm((current) => ({ ...current, end_date: event.target.value }))}
-                  />
-                </div>
-              </div>
-              <Button type="submit" disabled={isSaving} className="w-full">
-                {isSaving ? 'Saving...' : 'Create APE Event'}
-              </Button>
-            </form>
+                <Button type="submit" disabled={isSaving || !masterlistFile} className="w-full">
+                  <Upload className="h-4 w-4" />
+                  {isSaving ? 'Uploading...' : 'Upload and Generate Lab Orders'}
+                </Button>
+              </form>
+            </div>
 
             <div className="space-y-4">
-              <div className="rounded-2xl border p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="rounded-3xl border bg-card p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="font-bold">Current Mode</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {apeRuntime.apeModeEnabled
-                        ? `${apeRuntime.activeApeEvent?.name ?? 'Active APE'} is tagging all new records.`
-                        : 'New records are currently tagged as OPD walk-ins.'}
-                    </p>
+                    <h3 className="font-black">APE Events</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">Start the event when the clinic is already operating at the mission site.</p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="outline" onClick={handleSyncApeData} disabled={isSaving}>
-                      <CloudUpload className="h-4 w-4" />
-                      Sync to Cloud
-                    </Button>
-                    {apeRuntime.apeModeEnabled && (
-                      <Button type="button" variant="destructive" onClick={handleEndApeMode} disabled={isSaving}>
-                        End APE Mode
-                      </Button>
-                    )}
-                  </div>
+                  <Badge variant="secondary">{apeEvents.filter((event) => event.status === 'active').length} active</Badge>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-xl bg-muted/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pending Sync</p>
-                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.pendingCount}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Conflicts</p>
-                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.conflictCount}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Failed</p>
-                    <p className="mt-1 text-2xl font-black">{apeRuntime.syncSummary.failedCount}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border p-5">
-                <h3 className="font-bold">APE Events</h3>
                 <div className="mt-4 space-y-3">
                   {apeEvents.slice(0, 6).map((event) => (
-                    <div key={event.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background p-4">
-                      <div>
+                    <div key={event.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-background p-4 transition hover:border-primary/30 hover:bg-primary/5">
+                      <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold">{event.name}</p>
-                          <Badge variant="outline">{event.status}</Badge>
+                          <p className="font-bold">{event.name}</p>
+                          <Badge
+                            className={event.status === 'active' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : ''}
+                            variant={event.status === 'active' ? 'default' : 'outline'}
+                          >
+                            {event.status}
+                          </Badge>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{event.ape_code}</p>
                         {event.location && (
@@ -898,6 +1119,7 @@ export default function AdminSettingsPage() {
                       <Button
                         type="button"
                         variant={apeRuntime.activeApeEventId === event.id ? 'secondary' : 'outline'}
+                        className="min-h-11"
                         onClick={() => handleStartApeMode(event.id)}
                         disabled={isSaving || apeRuntime.activeApeEventId === event.id || event.status === 'completed'}
                       >
@@ -917,27 +1139,27 @@ export default function AdminSettingsPage() {
           </div>
         </Card>
 
-        <Tabs defaultValue="services" className="mt-8">
-          <TabsList className="grid h-auto grid-cols-4 gap-2 bg-transparent p-0">
-            <TabsTrigger value="services" className="h-11 border">
+        <Tabs defaultValue="services" className="space-y-5">
+          <TabsList className="sticky top-20 z-20 grid h-auto grid-cols-2 gap-2 rounded-3xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:grid-cols-4">
+            <TabsTrigger value="services" className="min-h-12 gap-2 rounded-2xl border bg-card data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <DollarSign className="h-4 w-4" />
               Service Pricing
             </TabsTrigger>
-            <TabsTrigger value="companies" className="h-11 border">
+            <TabsTrigger value="companies" className="min-h-12 gap-2 rounded-2xl border bg-card data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Building2 className="h-4 w-4" />
               Partner Companies
             </TabsTrigger>
-            <TabsTrigger value="doctors" className="h-11 border">
+            <TabsTrigger value="doctors" className="min-h-12 gap-2 rounded-2xl border bg-card data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Stethoscope className="h-4 w-4" />
               Doctors
             </TabsTrigger>
-            <TabsTrigger value="staff" className="h-11 border">
+            <TabsTrigger value="staff" className="min-h-12 gap-2 rounded-2xl border bg-card data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Users className="h-4 w-4" />
               Staff Accounts
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="services" className="mt-6">
+          <TabsContent value="services" className="mt-0">
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <Card className="p-6">
                 <div className="flex items-center gap-3">
@@ -1046,7 +1268,7 @@ export default function AdminSettingsPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="companies" className="mt-6">
+          <TabsContent value="companies" className="mt-0">
             <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
               <Card className="p-6">
                 <div className="flex items-center gap-3">
@@ -1245,7 +1467,7 @@ export default function AdminSettingsPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="doctors" className="mt-6">
+          <TabsContent value="doctors" className="mt-0">
             <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
               <Card className="p-6">
                 <div className="flex items-center gap-3">
@@ -1353,9 +1575,9 @@ export default function AdminSettingsPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="staff" className="mt-6">
-            <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-              <Card className="p-6">
+          <TabsContent value="staff" className="mt-0">
+            <div>
+              <Card className="hidden">
                 <div className="flex items-center gap-3">
                   <div className="rounded-xl bg-primary/10 p-3 text-primary">
                     <ShieldPlus className="h-5 w-5" />
@@ -1411,9 +1633,20 @@ export default function AdminSettingsPage() {
                 </form>
               </Card>
 
-              <Card className="p-6">
-                <h2 className="text-xl font-bold">Current User Accounts</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Overview of staff profiles already registered in the system. Edit a staff row to control module access and activation.</p>
+              <Card className="overflow-hidden border-border/70 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b bg-muted/30 px-5 py-4 md:px-6">
+                  <div>
+                    <h2 className="text-xl font-black tracking-tight">Current User Accounts</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Manage each staff member's department, job position, module access, and activation status.
+                    </p>
+                  </div>
+                  <Button type="button" onClick={() => setIsStaffCreateOpen(true)} className="min-h-11">
+                    <ShieldPlus className="h-4 w-4" />
+                    Add Staff Account
+                  </Button>
+                </div>
+                <div className="p-5 md:p-6">
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -1516,11 +1749,110 @@ export default function AdminSettingsPage() {
                     </TableBody>
                   </Table>
                 </div>
+                </div>
               </Card>
             </div>
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog
+        open={isStaffCreateOpen}
+        onOpenChange={(open) => {
+          setIsStaffCreateOpen(open);
+          if (!open) {
+            setStaffForm(initialStaffForm);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create Staff Account</DialogTitle>
+            <DialogDescription>
+              Create one account per staff member. The selected department and job position define the default modules and permissions.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleStaffSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor="create_staff_name">Full Name</Label>
+              <Input
+                id="create_staff_name"
+                value={staffForm.full_name}
+                onChange={(event) => setStaffForm((current) => ({ ...current, full_name: event.target.value }))}
+                placeholder="Jane Doe"
+                required
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="create_staff_email">Email Address</Label>
+                <Input
+                  id="create_staff_email"
+                  type="email"
+                  value={staffForm.email}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, email: event.target.value }))}
+                  placeholder="user@globalife.local"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create_staff_password">Temporary Password</Label>
+                <Input
+                  id="create_staff_password"
+                  type="password"
+                  value={staffForm.password}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))}
+                  placeholder="Set temporary password"
+                  required
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="create_staff_department">Department</Label>
+                <select
+                  id="create_staff_department"
+                  value={staffForm.department_code}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, department_code: event.target.value as DepartmentCode }))}
+                  className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {departmentCatalog.map((department) => (
+                    <option key={department.code} value={department.code}>
+                      {department.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create_staff_position">Job Position</Label>
+                <select
+                  id="create_staff_position"
+                  value={staffForm.job_position_code}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, job_position_code: event.target.value as JobPositionCode }))}
+                  className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {jobPositionCatalog.map((position) => (
+                    <option key={position.code} value={position.code}>
+                      {position.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="rounded-2xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+              After creation, open the staff row to fine-tune module access or special action permissions if needed.
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsStaffCreateOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? 'Creating account...' : 'Create Staff Account'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(editingService)} onOpenChange={(open) => !open && setEditingService(null)}>
         <DialogContent className="sm:max-w-2xl">
@@ -1769,119 +2101,120 @@ export default function AdminSettingsPage() {
       </Dialog>
 
       <Dialog open={Boolean(editingStaff)} onOpenChange={(open) => !open && setEditingStaff(null)}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[92dvh] flex-col overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="border-b px-6 py-5">
             <DialogTitle>Edit Staff Access</DialogTitle>
             <DialogDescription>Control which modules this staff account can access from the sidebar.</DialogDescription>
           </DialogHeader>
-          <form className="space-y-5" onSubmit={handleStaffEditSubmit}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="edit_staff_name">Full Name</Label>
-                <Input
-                  id="edit_staff_name"
-                  value={staffEditForm.full_name}
-                  onChange={(event) =>
-                    setStaffEditForm((current) => ({ ...current, full_name: event.target.value }))
-                  }
-                  required
-                />
+          <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleStaffEditSubmit}>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_staff_name">Full Name</Label>
+                  <Input
+                    id="edit_staff_name"
+                    value={staffEditForm.full_name}
+                    onChange={(event) =>
+                      setStaffEditForm((current) => ({ ...current, full_name: event.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit_staff_department">Department</Label>
+                  <select id="edit_staff_department" value={staffEditForm.department_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, department_code: event.target.value as DepartmentCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    {departmentCatalog.map((department) => <option key={department.code} value={department.code}>{department.label}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit_staff_position">Job Position</Label>
+                  <select id="edit_staff_position" value={staffEditForm.job_position_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, job_position_code: event.target.value as JobPositionCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    {jobPositionCatalog.map((position) => <option key={position.code} value={position.code}>{position.label}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_staff_department">Department</Label>
-                <select id="edit_staff_department" value={staffEditForm.department_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, department_code: event.target.value as DepartmentCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                  {departmentCatalog.map((department) => <option key={department.code} value={department.code}>{department.label}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_staff_position">Job Position</Label>
-                <select id="edit_staff_position" value={staffEditForm.job_position_code} onChange={(event) => setStaffEditForm((current) => ({ ...current, job_position_code: event.target.value as JobPositionCode }))} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                  {jobPositionCatalog.map((position) => <option key={position.code} value={position.code}>{position.label}</option>)}
-                </select>
-              </div>
-            </div>
 
-            <div className="flex items-center justify-between rounded-xl border p-4">
-              <div>
-                <p className="font-semibold">Account Status</p>
-                <p className="text-sm text-muted-foreground">Inactive staff cannot access the system even if the account exists.</p>
+              <div className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
+                <div>
+                  <p className="font-semibold">Account Status</p>
+                  <p className="text-sm text-muted-foreground">Inactive staff cannot access the system even if the account exists.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">
+                    {staffEditForm.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                  <Switch
+                    checked={staffEditForm.is_active}
+                    onCheckedChange={(checked) =>
+                      setStaffEditForm((current) => ({ ...current, is_active: checked }))
+                    }
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">
-                  {staffEditForm.is_active ? 'Active' : 'Inactive'}
-                </span>
-                <Switch
-                  checked={staffEditForm.is_active}
-                  onCheckedChange={(checked) =>
-                    setStaffEditForm((current) => ({ ...current, is_active: checked }))
-                  }
-                />
-              </div>
-            </div>
 
-            <div className="space-y-3">
-              <div>
-                <p className="font-semibold">Allowed Modules</p>
-                <p className="text-sm text-muted-foreground">Only modules valid for this role should be enabled. The sidebar will hide everything else.</p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {moduleCatalog.map((moduleItem) => {
-                  const stationRole = getLegacyRoleForAccount(staffEditForm.department_code, staffEditForm.job_position_code).stationRole;
-                  const roleDefaults = getDefaultAllowedModules(stationRole);
-                  const isRoleSupported = roleDefaults.includes(moduleItem.href);
+              <div className="space-y-3">
+                <div>
+                  <p className="font-semibold">Allowed Modules</p>
+                  <p className="text-sm text-muted-foreground">Only modules valid for this role should be enabled. The sidebar will hide everything else.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {moduleCatalog.map((moduleItem) => {
+                    const stationRole = getLegacyRoleForAccount(staffEditForm.department_code, staffEditForm.job_position_code).stationRole;
+                    const roleDefaults = getDefaultAllowedModules(stationRole);
+                    const isRoleSupported = roleDefaults.includes(moduleItem.href);
 
-                  return (
-                    <label
-                      key={moduleItem.href}
-                      className={`flex items-center gap-3 rounded-xl border p-3 ${
-                        isRoleSupported ? 'bg-background' : 'bg-muted/40 opacity-60'
-                      }`}
-                    >
+                    return (
+                      <label
+                        key={moduleItem.href}
+                        className={`flex min-h-16 items-center gap-3 rounded-xl border p-3 ${
+                          isRoleSupported ? 'bg-background' : 'border-dashed bg-sky-50/50'
+                        }`}
+                      >
+                        <Checkbox
+                          checked={staffEditForm.allowed_modules.includes(moduleItem.href)}
+                          onCheckedChange={(checked) =>
+                            handleStaffModuleToggle(moduleItem.href, Boolean(checked))
+                          }
+                        />
+                        <div className="min-w-0">
+                          <p className="font-medium leading-tight">{moduleItem.label}</p>
+                          {!isRoleSupported && (
+                            <p className="text-xs text-sky-700">Extra access outside role default</p>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <p className="font-semibold">Action Permissions</p>
+                  <p className="text-sm text-muted-foreground">
+                    Sensitive actions are enforced in both the UI and API.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {actionPermissionCatalog.map((permissionItem) => (
+                    <label key={permissionItem.key} className="flex items-start gap-3 rounded-xl border p-3">
                       <Checkbox
-                        checked={staffEditForm.allowed_modules.includes(moduleItem.href)}
-                        disabled={!isRoleSupported}
+                        checked={staffEditForm.action_permissions.includes(permissionItem.key)}
                         onCheckedChange={(checked) =>
-                          handleStaffModuleToggle(moduleItem.href, Boolean(checked))
+                          handleStaffPermissionToggle(permissionItem.key, Boolean(checked))
                         }
                       />
-                      <div>
-                        <p className="font-medium">{moduleItem.label}</p>
-                        {!isRoleSupported && (
-                          <p className="text-xs text-muted-foreground">Not available for this role</p>
-                        )}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <p className="font-semibold">Action Permissions</p>
-                <p className="text-sm text-muted-foreground">
-                  Sensitive actions are enforced in both the UI and API.
-                </p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {actionPermissionCatalog.map((permissionItem) => (
-                  <label key={permissionItem.key} className="flex items-start gap-3 rounded-xl border p-3">
-                    <Checkbox
-                      checked={staffEditForm.action_permissions.includes(permissionItem.key)}
-                      onCheckedChange={(checked) =>
-                        handleStaffPermissionToggle(permissionItem.key, Boolean(checked))
-                      }
-                    />
                     <div>
                       <p className="font-medium">{permissionItem.label}</p>
                       <p className="text-xs text-muted-foreground">{permissionItem.description}</p>
                     </div>
-                  </label>
-                ))}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="border-t bg-background px-6 py-4">
               <Button type="button" variant="outline" onClick={() => setEditingStaff(null)}>
                 Cancel
               </Button>

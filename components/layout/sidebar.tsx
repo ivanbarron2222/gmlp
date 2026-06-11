@@ -6,7 +6,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   History,
+  MessageCircle,
   UserPlus,
+  QrCode,
   FileText,
   ShoppingCart,
   FolderKanban,
@@ -15,6 +17,7 @@ import {
   CheckCircle2,
   Stethoscope,
   Tickets,
+  ClipboardList,
   Settings2,
   LogOut,
 } from 'lucide-react';
@@ -48,9 +51,19 @@ const navItems = [
     icon: Stethoscope,
   },
   {
+    label: 'Mission Intake',
+    href: '/staff/mission-intake',
+    icon: ClipboardList,
+  },
+  {
     label: 'Patient Registration',
     href: '/staff/patient-registration',
     icon: UserPlus,
+  },
+  {
+    label: 'QR Scanner',
+    href: '/staff/qr-scanner',
+    icon: QrCode,
   },
   {
     label: 'Queue Management',
@@ -88,6 +101,11 @@ const navItems = [
     icon: CheckCircle2,
   },
   {
+    label: 'Messages',
+    href: '/staff/messages',
+    icon: MessageCircle,
+  },
+  {
     label: 'Admin Settings',
     href: '/staff/settings',
     icon: Settings2,
@@ -103,6 +121,7 @@ export function Sidebar() {
   const [jobPositionCode, setJobPositionCode] = useState<JobPositionCode | null>(null);
   const [activeDailyRole, setActiveDailyRole] = useState<MedtechDailyRole | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0);
 
   useEffect(() => {
     const storedRole = readStationRole();
@@ -141,16 +160,16 @@ export function Sidebar() {
     const baseAllowed = new Set(getDefaultAllowedModules(stationRole));
     const effectiveAllowed =
       allowedModules.length > 0
-        ? allowedModules.filter((href) => baseAllowed.has(href as never))
+        ? Array.from(new Set(allowedModules))
         : Array.from(baseAllowed);
 
     if (jobPositionCode === 'medical_technologist') {
       if (activeDailyRole === 'extractor') {
-        return navItems.filter((item) => item.href === '/staff/queue');
+        return navItems.filter((item) => item.href === '/staff/queue' || item.href === '/staff/qr-scanner' || item.href === '/staff/messages');
       }
 
       if (activeDailyRole === 'tester') {
-        return navItems.filter((item) => item.href === '/staff/patient-records' || item.href === '/staff/lab-orders');
+        return navItems.filter((item) => item.href === '/staff/patient-records' || item.href === '/staff/lab-orders' || item.href === '/staff/qr-scanner' || item.href === '/staff/messages');
       }
     }
 
@@ -158,8 +177,65 @@ export function Sidebar() {
       effectiveAllowed.push('/staff/doctors');
     }
 
+    if (!effectiveAllowed.includes('/staff/messages')) {
+      effectiveAllowed.push('/staff/messages');
+    }
+
     return navItems.filter((item) => effectiveAllowed.includes(item.href));
   }, [activeDailyRole, allowedModules, isHydrated, jobPositionCode, stationRole]);
+
+  const refreshMessageUnreadCount = async () => {
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase!.auth.getSession();
+
+      if (!session?.access_token) {
+        setMessageUnreadCount(0);
+        return;
+      }
+
+      const response = await fetch('/api/staff/messages/unread', {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as { totalUnreadCount?: number };
+      setMessageUnreadCount(payload.totalUnreadCount ?? 0);
+    } catch {
+      // Keep the existing badge count if the network is temporarily unavailable.
+    }
+  };
+
+  useEffect(() => {
+    if (!isHydrated || !stationRole) {
+      setMessageUnreadCount(0);
+      return;
+    }
+
+    void refreshMessageUnreadCount();
+    const interval = window.setInterval(() => void refreshMessageUnreadCount(), 30000);
+    const handleFocus = () => void refreshMessageUnreadCount();
+    const handleUnreadEvent = (event: Event) => {
+      const totalUnreadCount = (event as CustomEvent<{ totalUnreadCount?: number }>).detail?.totalUnreadCount;
+      if (typeof totalUnreadCount === 'number') {
+        setMessageUnreadCount(totalUnreadCount);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('staff-messages-unread', handleUnreadEvent);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('staff-messages-unread', handleUnreadEvent);
+    };
+  }, [isHydrated, stationRole]);
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -170,6 +246,7 @@ export function Sidebar() {
     setAllowedModules([]);
     setJobPositionCode(null);
     setActiveDailyRole(null);
+    setMessageUnreadCount(0);
     router.push('/login');
   };
 
@@ -219,7 +296,19 @@ export function Sidebar() {
                 )}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                <span>{item.label}</span>
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.href === '/staff/messages' && messageUnreadCount > 0 && (
+                  <span
+                    className={cn(
+                      'ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-black leading-none',
+                      isActive
+                        ? 'bg-sidebar-primary-foreground text-sidebar-primary'
+                        : 'bg-primary text-primary-foreground'
+                    )}
+                  >
+                    {messageUnreadCount > 99 ? '99+' : messageUnreadCount}
+                  </span>
+                )}
               </Link>
             );
           })}

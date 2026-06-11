@@ -388,14 +388,7 @@ function LabOrdersPageContent() {
     return (
       <PageLayout>
         <div className="px-8 py-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Lab Requests</p>
-              <h1 className="mt-2 text-3xl font-bold">Lab Orders</h1>
-              <p className="mt-2 max-w-3xl text-muted-foreground">
-                View blood test, drug test, xray, and ECG requests. Open a request to upload machine results or encode findings.
-              </p>
-            </div>
+          <div className="flex justify-end">
             <div className="grid gap-3 sm:grid-cols-4">
               <Card className="min-w-28 p-4 text-center">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
@@ -554,28 +547,13 @@ function LabOrdersPageContent() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-              {lane} Station
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">
-              {isResultMode ? 'Lab Result Workflow' : 'Queue Station Workflow'}
-            </h1>
-            <p className="mt-2 text-muted-foreground">
-              {isResultMode
-                ? `Upload or encode the ${lane} result for this lab request.`
-                : lane === 'BLOOD TEST'
-                  ? 'Use this station view for blood extraction only. No machine upload is needed here; mark the queue step complete after extraction.'
-                  : `Use this station view for the ${lane} queue step. Mark the queue step complete after the station work is done.`}
-            </p>
-          </div>
+        <div className="flex justify-end">
           <Button asChild variant="outline">
             <Link href={getQueueVisitPath(entry.id)}>View Patient Visit</Link>
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_1.3fr]">
+        <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1.3fr]">
           <Card className="p-6">
             <div className="flex items-start justify-between">
               <div>

@@ -4,7 +4,9 @@ export type StaffModulePath =
   | '/dashboard'
   | '/staff/activity-log'
   | '/staff/doctors'
+  | '/staff/mission-intake'
   | '/staff/patient-registration'
+  | '/staff/qr-scanner'
   | '/staff/queue'
   | '/staff/cashier'
   | '/staff/patient-records'
@@ -12,13 +14,16 @@ export type StaffModulePath =
   | '/staff/specimen-tracking'
   | '/staff/result-encoding'
   | '/staff/result-release'
+  | '/staff/messages'
   | '/staff/settings';
 
 export const moduleCatalog: Array<{ label: string; href: StaffModulePath }> = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Activity Log', href: '/staff/activity-log' },
   { label: 'Doctors', href: '/staff/doctors' },
+  { label: 'Mission Intake', href: '/staff/mission-intake' },
   { label: 'Patient Registration', href: '/staff/patient-registration' },
+  { label: 'QR Scanner', href: '/staff/qr-scanner' },
   { label: 'Queue Management', href: '/staff/queue' },
   { label: 'Cashier / Billing', href: '/staff/cashier' },
   { label: 'Patient Records', href: '/staff/patient-records' },
@@ -26,6 +31,7 @@ export const moduleCatalog: Array<{ label: string; href: StaffModulePath }> = [
   { label: 'Specimen Tracking', href: '/staff/specimen-tracking' },
   { label: 'Result Encoding', href: '/staff/result-encoding' },
   { label: 'Result Release', href: '/staff/result-release' },
+  { label: 'Messages', href: '/staff/messages' },
   { label: 'Admin Settings', href: '/staff/settings' },
 ];
 
@@ -34,23 +40,26 @@ export function getDefaultAllowedModules(role: StationRole): StaffModulePath[] {
     case 'admin':
       return moduleCatalog.map((moduleItem) => moduleItem.href);
     case 'nurse':
-      return ['/staff/doctors', '/staff/patient-registration', '/staff/queue', '/staff/patient-records'];
+      return ['/staff/doctors', '/staff/mission-intake', '/staff/patient-registration', '/staff/qr-scanner', '/staff/queue', '/staff/patient-records', '/staff/messages'];
     case 'blood-test':
     case 'drug-test':
     case 'xray':
     case 'ecg':
-      return ['/staff/queue', '/staff/lab-orders', '/staff/patient-records'];
+      return ['/staff/qr-scanner', '/staff/queue', '/staff/lab-orders', '/staff/patient-records', '/staff/messages'];
     case 'encoder':
-      return ['/staff/patient-records', '/staff/result-release'];
+      return ['/staff/qr-scanner', '/staff/patient-records', '/staff/result-release', '/staff/messages'];
     case 'doctor':
-      return ['/staff/queue', '/staff/result-encoding', '/staff/patient-records'];
+      return ['/staff/qr-scanner', '/staff/queue', '/staff/result-encoding', '/staff/patient-records', '/staff/messages'];
     case 'cashier':
       return [
+        '/staff/mission-intake',
         '/staff/patient-registration',
+        '/staff/qr-scanner',
         '/staff/queue',
         '/staff/cashier',
         '/staff/patient-records',
         '/staff/result-release',
+        '/staff/messages',
       ];
     default:
       return moduleCatalog.map((moduleItem) => moduleItem.href);

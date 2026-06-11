@@ -144,20 +144,13 @@ export default function SpecimenTrackingPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div>
-          <h1 className="text-3xl font-bold">Specimen Tracking</h1>
-          <p className="mt-2 text-muted-foreground">
-            Review tested lab-order summaries and see who uploaded or completed the machine result.
-          </p>
-        </div>
-
         {pageError ? (
-          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {pageError}
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-4">
           <Card className="border-l-4 border-orange-400 p-4">
             <p className="text-xs font-semibold text-muted-foreground">PENDING COLLECTION</p>
             <p className="mt-2 text-3xl font-bold text-orange-600">{counters.pending}</p>

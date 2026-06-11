@@ -120,7 +120,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ pati
       visibleTestTypes.length > 0
         ? context.supabase
             .from('patient_test_instances')
-            .select('id, visit_id, test_type, sequence_number, status, result_payload, notes, encoded_at, created_at, updated_at')
+            .select('id, visit_id, test_type, sequence_number, status, result_payload, input_source, machine_source, machine_payload, notes, encoded_at, created_at, updated_at')
             .eq('patient_id', patientId)
             .in('test_type', visibleTestTypes)
             .order('sequence_number', { ascending: true })
@@ -159,6 +159,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
       resultPayload?: Record<string, unknown>;
       notes?: string;
       status?: 'draft' | 'completed';
+      inputSource?: 'manual' | 'machine';
+      machineSource?: string;
+      machinePayload?: Record<string, unknown>;
     };
 
     if (!body.testType || !allTestTypes.includes(body.testType)) {
@@ -216,6 +219,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
         result_payload: body.resultPayload ?? {},
         encoded_by: context.userId,
         encoded_at: new Date().toISOString(),
+        input_source: body.inputSource ?? 'manual',
+        machine_source: body.inputSource === 'machine' ? body.machineSource?.trim() || 'pending-machine-bridge' : null,
+        machine_payload: body.inputSource === 'machine' ? body.machinePayload ?? {} : {},
         ...visitContextPayload,
       })
       .select('id, visit_id, test_type, status')

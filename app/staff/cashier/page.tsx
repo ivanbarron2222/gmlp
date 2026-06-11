@@ -470,20 +470,13 @@ function CashierPageContent() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Cashier / Billing</h1>
-            <p className="mt-2 text-muted-foreground">
-              Process pending patient payments, print the invoice / receipt, and send the patient
-              back to the correct laboratory queue for processing.
-            </p>
-          </div>
+        <div className="flex justify-end">
           <Button asChild variant="outline">
             <Link href="/staff/queue">Open Queue Management</Link>
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-8 xl:grid-cols-[360px_1fr]">
+        <div className="mt-6 grid gap-8 xl:grid-cols-[360px_1fr]">
           <Card className="p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>

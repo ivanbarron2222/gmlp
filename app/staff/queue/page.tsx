@@ -222,17 +222,7 @@ export default function QueueManagementPage() {
     return (
       <PageLayout>
         <div className="px-8 py-8">
-          <div className="mb-8 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-                {getRoleLabel(stationRole!)}
-              </p>
-              <h1 className="mt-2 text-4xl font-bold tracking-tight">{lane} Queue</h1>
-              <p className="mt-3 max-w-3xl text-muted-foreground">
-                Keep this station focused on active work. The serving patient stays prominent, and
-                the waiting queue stays inside a scrollable panel.
-              </p>
-            </div>
+          <div className="mb-6 flex justify-end">
             <Button asChild variant="outline" className="gap-2">
               <Link href="/queue-display" target="_blank">
                 <MonitorPlay className="w-4 h-4" />
@@ -423,17 +413,7 @@ export default function QueueManagementPage() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">Queue Management</h1>
-            <p className="mt-2 text-muted-foreground">
-              {stationRole === 'admin'
-                ? 'Admin can monitor every lane, review queue movement, and oversee the full clinic workflow from one board.'
-                : stationRole === 'cashier'
-                  ? 'Cashier / front desk can verify patients, start the live queue, and continue into billing from the same workspace.'
-                : 'Pre-employment must complete all required stations, but patients can start at any available lab. Check-up starts with the doctor, and optional labs can be added after the consultation.'}
-            </p>
-          </div>
+        <div className="mb-6 flex justify-end">
           <Button asChild variant="outline" className="gap-2">
             <Link href="/queue-display" target="_blank">
               <MonitorPlay className="w-4 h-4" />

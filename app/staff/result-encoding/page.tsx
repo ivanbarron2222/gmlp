@@ -103,22 +103,13 @@ function ResultEncodingPageContent() {
   return (
     <PageLayout>
       <div className="px-8 py-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-primary">
-              Doctor Station
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">Consultation Workflow</h1>
-            <p className="mt-2 text-muted-foreground">
-              Manage check-up and pre-employment doctor steps directly from the selected queue visit.
-            </p>
-          </div>
+        <div className="flex justify-end">
           <Button asChild variant="outline">
             <Link href={getQueueVisitPath(entry.id)}>View Patient Visit</Link>
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_1.3fr]">
+        <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1.3fr]">
           <Card className="p-6">
             <div className="flex items-start justify-between">
               <div>
