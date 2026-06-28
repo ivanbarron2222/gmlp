@@ -389,7 +389,7 @@ function LabOrdersPageContent() {
       <PageLayout>
         <div className="px-8 py-8">
           <div className="flex justify-end">
-            <div className="grid gap-3 sm:grid-cols-4">
+            {/* <div className="grid gap-3 sm:grid-cols-4">
               <Card className="min-w-28 p-4 text-center">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
                 <p className="mt-2 text-3xl font-black">{counters.total}</p>
@@ -406,7 +406,7 @@ function LabOrdersPageContent() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Results</p>
                 <p className="mt-2 text-3xl font-black text-primary">{counters.withResults}</p>
               </Card>
-            </div>
+            </div> */}
           </div>
 
           {ordersError && (
